@@ -1,0 +1,8 @@
+.env
+.env.*
+*.key
+**pycache**/
+*.pyc
+venv/
+.streamlit/secrets.toml
+*.backup
