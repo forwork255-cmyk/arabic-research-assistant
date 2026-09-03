@@ -193,6 +193,26 @@ def render_result(question: str, stages: dict) -> None:
 
     st.divider()
 
+    def short_id(openalex_id: str) -> str:
+        return openalex_id.rstrip("/").rsplit("/", 1)[-1]
+
+    sources_by_short_id = {short_id(s["openalex_id"]): s for s in synthesis["sources"]}
+
+    def format_source_links(paper_ids: list) -> str:
+        """Turn raw OpenAlex IDs (e.g. 'W123...') into clickable source-title
+        links using the exact same Python-built bibliography shown in the
+        المصادر section -- never anything the model generated."""
+        links = []
+        for pid in paper_ids:
+            source = sources_by_short_id.get(pid)
+            if source and source.get("url"):
+                links.append(f"[{source['title']}]({source['url']})")
+            elif source:
+                links.append(source["title"])
+            else:
+                links.append(pid)
+        return "، ".join(links)
+
     # --- الدراسات المسترجعة -------------------------------------------------
     st.header("الدراسات المسترجعة")
     unique_papers = search_report["unique_papers"]
@@ -228,14 +248,14 @@ def render_result(question: str, stages: dict) -> None:
     st.header("نتائج الدراسات")
     for item in synthesis["what_studies_found"]:
         st.markdown(f"- {item['claim']}")
-        st.caption("المصادر: " + ", ".join(item["supporting_paper_ids"]))
+        st.caption("المصادر: " + format_source_links(item["supporting_paper_ids"]))
 
     # --- مواضع الاختلاف -------------------------------------------------------
     if synthesis.get("where_studies_disagree"):
         st.header("مواضع الاختلاف")
         for item in synthesis["where_studies_disagree"]:
             st.markdown(f"- {item['issue']}")
-            st.caption("المصادر: " + ", ".join(item["supporting_paper_ids"]))
+            st.caption("المصادر: " + format_source_links(item["supporting_paper_ids"]))
 
     # --- ما لا يمكن استنتاجه --------------------------------------------------
     if synthesis.get("what_cannot_be_concluded"):
