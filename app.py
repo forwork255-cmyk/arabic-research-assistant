@@ -132,6 +132,51 @@ search_clicked = st.button("بحث", type="primary", use_container_width=True)
 st.caption(f"عمليات البحث المتبقية على هذا الرمز: {remaining_searches()}")
 
 
+def build_report_text(question: str, stages: dict) -> str:
+    """
+    Plain-text version of the same result shown on screen, for the download
+    button -- so a user can paste it into their own document. Built purely
+    from already-validated pipeline output (same data render_result() shows),
+    nothing new is generated here.
+    """
+    synthesis = stages["synthesis"]
+    lines = [
+        "السؤال البحثي",
+        question,
+        "",
+        "ما وجدته الدراسات",
+    ]
+    for item in synthesis["what_studies_found"]:
+        lines.append(f"- {item['claim']}")
+        lines.append(f"  (المصادر: {', '.join(item['supporting_paper_ids'])})")
+
+    if synthesis.get("where_studies_disagree"):
+        lines += ["", "مواضع الاختلاف"]
+        for item in synthesis["where_studies_disagree"]:
+            lines.append(f"- {item['issue']}")
+            lines.append(f"  (المصادر: {', '.join(item['supporting_paper_ids'])})")
+
+    if synthesis.get("what_cannot_be_concluded"):
+        lines += ["", "ما لا يمكن استنتاجه"]
+        for item in synthesis["what_cannot_be_concluded"]:
+            lines.append(f"- {item}")
+
+    lines += ["", "الخلاصة (تفسير الذكاء الاصطناعي، وليس نتيجة منشورة)", synthesis["ai_synthesis"]]
+
+    lines += ["", "المصادر"]
+    for s in synthesis["sources"]:
+        authors = ", ".join(s["authors"]) if isinstance(s["authors"], list) else s["authors"]
+        lines.append(f"- {s['title']}")
+        lines.append(f"  {authors} ({s['year']})")
+        if s["doi"]:
+            lines.append(f"  DOI: {s['doi']}")
+        if s["url"]:
+            lines.append(f"  {s['url']}")
+
+    lines += ["", "ملاحظة: هذا ليس مراجعة أدبية شاملة."]
+    return "\n".join(lines)
+
+
 def render_result(question: str, stages: dict) -> None:
     queries = stages["queries"]
     search_report = stages["search_report"]
@@ -216,6 +261,13 @@ def render_result(question: str, stages: dict) -> None:
         st.divider()
 
     st.caption("ملاحظة: هذا ليس مراجعة أدبية شاملة.")
+
+    st.download_button(
+        "تنزيل التقرير",
+        data=build_report_text(question, stages),
+        file_name="research_report.txt",
+        mime="text/plain",
+    )
 
     if backend.TOKEN_USAGE_LOG:
         with st.expander("استخدام الرموز / Token usage"):
