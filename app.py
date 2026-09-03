@@ -65,6 +65,29 @@ def check_access_code() -> bool:
 if not check_access_code():
     st.stop()
 
+# Session-only search history: a list of {"question": str, "stages": dict}.
+# This is NOT saved anywhere -- it lives only in this browser tab's session
+# and disappears when the tab is closed or the session expires. No database.
+st.session_state.setdefault("search_history", [])
+st.session_state.setdefault("viewing_index", None)
+
+with st.sidebar:
+    st.subheader("سجل البحث")
+    if st.button("+ بحث جديد", use_container_width=True):
+        st.session_state["viewing_index"] = None
+        st.rerun()
+    st.divider()
+    if not st.session_state["search_history"]:
+        st.caption("لا يوجد سجل بعد في هذه الجلسة.")
+    else:
+        for i in range(len(st.session_state["search_history"]) - 1, -1, -1):
+            entry = st.session_state["search_history"][i]
+            label = entry["question"][:40] + ("…" if len(entry["question"]) > 40 else "")
+            if st.button(label, key=f"history_{i}", use_container_width=True):
+                st.session_state["viewing_index"] = i
+                st.rerun()
+    st.caption("السجل مؤقت لهذه الجلسة فقط، ويُحذف عند إغلاق المتصفح.")
+
 
 def remaining_searches() -> int:
     """How many searches are left on the currently logged-in code."""
@@ -77,6 +100,7 @@ def remaining_searches() -> int:
 def record_search_used() -> None:
     code = st.session_state["access_code"]
     _USAGE_COUNTS[code] = _USAGE_COUNTS.get(code, 0) + 1
+
 
 # Light/Dark/"Use system setting" is handled by Streamlit's own built-in
 # Settings menu (the app's "⋮" menu, top right) -- no custom picker or CSS
@@ -92,6 +116,11 @@ st.markdown(
     .stButton button { direction: rtl; }
     h1 { margin-bottom: 0.2rem; }
     .app-subtitle { color: var(--text-color-secondary, #666); line-height: 1.8; margin-bottom: 1.6rem; }
+    /* The RTL direction above breaks the sidebar's own width calculation
+       (it collapses to a sliver, wrapping Arabic text one letter per line)
+       unless a fixed width is forced here. */
+    section[data-testid="stSidebar"] { min-width: 300px !important; width: 300px !important; }
+    section[data-testid="stSidebar"] > div { width: 300px !important; direction: rtl; text-align: right; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -104,15 +133,6 @@ st.markdown(
     "موثّق بالمصادر الفعلية — دون اختلاق أي معلومات.</p>",
     unsafe_allow_html=True,
 )
-
-question = st.text_area(
-    "سؤالك البحثي",
-    height=130,
-    placeholder="مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟",
-)
-
-search_clicked = st.button("بحث", type="primary", use_container_width=True)
-st.caption(f"عمليات البحث المتبقية على هذا الرمز: {remaining_searches()}")
 
 
 def build_report_text(question: str, stages: dict) -> str:
@@ -272,61 +292,80 @@ STAGE_LABELS = {
     7: "التحقق من النتائج",
 }
 
-if search_clicked:
-    if not question.strip():
-        st.warning("الرجاء إدخال سؤال بحثي أولاً.")
-    elif remaining_searches() <= 0:
-        st.error("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
-    else:
-        record_search_used()
+if st.session_state["viewing_index"] is not None:
+    # Showing a past search from this session's history -- read-only replay,
+    # no new API call.
+    entry = st.session_state["search_history"][st.session_state["viewing_index"]]
+    st.caption("عرض من سجل هذه الجلسة")
+    st.subheader(entry["question"])
+    render_result(entry["question"], entry["stages"])
+else:
+    question = st.text_area(
+        "سؤالك البحثي",
+        height=130,
+        placeholder="مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟",
+    )
 
-        # Reset per-search so token usage doesn't accumulate across searches
-        # in the same running app (Streamlit reruns the script, but the
-        # imported run_assistant module -- and its state -- persists).
-        backend.TOKEN_USAGE_LOG.clear()
+    search_clicked = st.button("بحث", type="primary", use_container_width=True)
+    st.caption(f"عمليات البحث المتبقية على هذا الرمز: {remaining_searches()}")
 
-        # user_message / technical_name are set on failure and rendered
-        # AFTER the status block closes, so an error is never hidden inside
-        # a collapsed status widget the user would have to re-expand.
-        stages = None
-        user_message = None
-        technical_name = None
+    if search_clicked:
+        if not question.strip():
+            st.warning("الرجاء إدخال سؤال بحثي أولاً.")
+        elif remaining_searches() <= 0:
+            st.error("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+        else:
+            record_search_used()
 
-        with st.status("جارٍ تنفيذ البحث...", expanded=True) as status:
-            def on_progress(step: int, total: int, message: str) -> None:
-                label = STAGE_LABELS.get(step, message)
-                status.write(f"[{step}/{total}] {label}")
+            # Reset per-search so token usage doesn't accumulate across searches
+            # in the same running app (Streamlit reruns the script, but the
+            # imported run_assistant module -- and its state -- persists).
+            backend.TOKEN_USAGE_LOG.clear()
 
-            try:
-                stages = run_pipeline(
-                    question,
-                    query_generator=backend.generate_queries,
-                    relevance_classifier=backend.classify_relevance,
-                    extractor=backend.extract_findings,
-                    synthesizer=backend.synthesize_final,
-                    progress=on_progress,
-                )
-            except ModelClientError as error:
-                print(f"[server-only log] ModelClientError: {error}")  # console only, never shown in the browser
-                status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
-                user_message = "تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً."
-                technical_name = type(error).__name__
-            except PipelineError as error:
-                print(f"[server-only log] PipelineError: {error}")  # console only, never shown in the browser
-                status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
-                user_message = "تعذّر إكمال معالجة النتائج. يرجى المحاولة مرة أخرى أو تعديل السؤال."
-                technical_name = type(error).__name__
-            except Exception as error:
-                # Safety net: never show a raw traceback or internal details to the user.
-                status.update(label="حدث خطأ غير متوقع", state="error", expanded=False)
-                user_message = "حدث خطأ غير متوقع. لم يتم عرض أي نتيجة غير مكتملة."
-                technical_name = type(error).__name__
-            else:
-                status.update(label="اكتمل البحث", state="complete", expanded=False)
+            # user_message / technical_name are set on failure and rendered
+            # AFTER the status block closes, so an error is never hidden inside
+            # a collapsed status widget the user would have to re-expand.
+            stages = None
+            user_message = None
+            technical_name = None
 
-        if user_message:
-            st.error(user_message)
-            with st.expander("تفاصيل تقنية"):
-                st.caption(technical_name)
-        elif stages is not None:
-            render_result(question, stages)
+            with st.status("جارٍ تنفيذ البحث...", expanded=True) as status:
+                def on_progress(step: int, total: int, message: str) -> None:
+                    label = STAGE_LABELS.get(step, message)
+                    status.write(f"[{step}/{total}] {label}")
+
+                try:
+                    stages = run_pipeline(
+                        question,
+                        query_generator=backend.generate_queries,
+                        relevance_classifier=backend.classify_relevance,
+                        extractor=backend.extract_findings,
+                        synthesizer=backend.synthesize_final,
+                        progress=on_progress,
+                    )
+                except ModelClientError as error:
+                    print(f"[server-only log] ModelClientError: {error}")  # console only, never shown in the browser
+                    status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
+                    user_message = "تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً."
+                    technical_name = type(error).__name__
+                except PipelineError as error:
+                    print(f"[server-only log] PipelineError: {error}")  # console only, never shown in the browser
+                    status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
+                    user_message = "تعذّر إكمال معالجة النتائج. يرجى المحاولة مرة أخرى أو تعديل السؤال."
+                    technical_name = type(error).__name__
+                except Exception as error:
+                    # Safety net: never show a raw traceback or internal details to the user.
+                    status.update(label="حدث خطأ غير متوقع", state="error", expanded=False)
+                    user_message = "حدث خطأ غير متوقع. لم يتم عرض أي نتيجة غير مكتملة."
+                    technical_name = type(error).__name__
+                else:
+                    status.update(label="اكتمل البحث", state="complete", expanded=False)
+
+            if user_message:
+                st.error(user_message)
+                with st.expander("تفاصيل تقنية"):
+                    st.caption(technical_name)
+            elif stages is not None:
+                st.session_state["search_history"].append({"question": question, "stages": stages})
+                st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
+                render_result(question, stages)
