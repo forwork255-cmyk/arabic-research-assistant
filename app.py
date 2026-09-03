@@ -24,32 +24,59 @@ from model_client import ModelClientError
 
 st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
 
+# In-memory usage counter per access code: {code: searches_used}. This is
+# NOT a database -- it lives only in this running app's memory, so it
+# persists across visitors while the app stays up, but resets to zero on
+# every redeploy or restart. Good enough to stop one code from running up
+# unlimited API cost; not a real accounting system.
+_USAGE_COUNTS = {}
 
-def check_password() -> bool:
+
+def check_access_code() -> bool:
     """
-    Simple shared-password gate so this doesn't sit open to the public internet
-    with no protection (every search costs real API money). The real password
-    is never written in this file -- it lives in Streamlit's own "secrets"
-    storage (a local secrets.toml that is gitignored, or the Secrets box in
-    Streamlit Cloud's dashboard when deployed), same rule as the API key.
+    Multiple shared access codes (instead of one password), each with its own
+    search limit -- so different people/customers can be given different
+    codes, and no single code can spend unlimited API money. The real codes
+    are never written in this file -- they live in Streamlit's own "secrets"
+    storage (ACCESS_CODES table below), same rule as the API key.
+
+    secrets.toml shape:
+        [ACCESS_CODES]
+        SOME_CODE = 20
+        ANOTHER_CODE = 5
+    (each value is that code's total allowed searches)
     """
     if st.session_state.get("authenticated"):
         return True
 
     st.title("📚 مساعد البحث العلمي العربي")
-    password = st.text_input("كلمة المرور", type="password")
+    code = st.text_input("رمز الدخول", type="password")
     if st.button("دخول"):
-        correct_password = st.secrets.get("APP_PASSWORD")
-        if correct_password and password == correct_password:
+        access_codes = st.secrets.get("ACCESS_CODES", {})
+        if code in access_codes:
             st.session_state["authenticated"] = True
+            st.session_state["access_code"] = code
             st.rerun()
         else:
-            st.error("كلمة المرور غير صحيحة.")
+            st.error("رمز الدخول غير صحيح.")
     return False
 
 
-if not check_password():
+if not check_access_code():
     st.stop()
+
+
+def remaining_searches() -> int:
+    """How many searches are left on the currently logged-in code."""
+    code = st.session_state["access_code"]
+    limit = st.secrets.get("ACCESS_CODES", {}).get(code, 0)
+    used = _USAGE_COUNTS.get(code, 0)
+    return max(0, limit - used)
+
+
+def record_search_used() -> None:
+    code = st.session_state["access_code"]
+    _USAGE_COUNTS[code] = _USAGE_COUNTS.get(code, 0) + 1
 
 THEME_OPTIONS = {"تلقائي (حسب الجهاز)": "auto", "فاتح": "light", "داكن": "dark"}
 
@@ -102,6 +129,7 @@ question = st.text_area(
 )
 
 search_clicked = st.button("بحث", type="primary", use_container_width=True)
+st.caption(f"عمليات البحث المتبقية على هذا الرمز: {remaining_searches()}")
 
 
 def render_result(question: str, stages: dict) -> None:
@@ -212,7 +240,11 @@ STAGE_LABELS = {
 if search_clicked:
     if not question.strip():
         st.warning("الرجاء إدخال سؤال بحثي أولاً.")
+    elif remaining_searches() <= 0:
+        st.error("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
     else:
+        record_search_used()
+
         # Reset per-search so token usage doesn't accumulate across searches
         # in the same running app (Streamlit reruns the script, but the
         # imported run_assistant module -- and its state -- persists).
