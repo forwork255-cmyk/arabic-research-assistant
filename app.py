@@ -78,27 +78,10 @@ def record_search_used() -> None:
     code = st.session_state["access_code"]
     _USAGE_COUNTS[code] = _USAGE_COUNTS.get(code, 0) + 1
 
-THEME_OPTIONS = {"تلقائي (حسب الجهاز)": "auto", "فاتح": "light", "داكن": "dark"}
-
-theme_choice = st.selectbox("المظهر", options=list(THEME_OPTIONS.keys()), key="theme_choice")
-theme_mode = THEME_OPTIONS[theme_choice]
-
-# Background/text colors per mode. "auto" uses a CSS media query so it
-# follows the visitor's own device setting -- no JS, no extra dependency.
-_LIGHT_RULE = ".stApp { background-color: #ffffff !important; color: #111111 !important; }"
-_DARK_RULE = ".stApp { background-color: #0e1117 !important; color: #f5f5f5 !important; }"
-
-if theme_mode == "light":
-    theme_css = _LIGHT_RULE
-elif theme_mode == "dark":
-    theme_css = _DARK_RULE
-else:
-    theme_css = (
-        f"@media (prefers-color-scheme: light) {{ {_LIGHT_RULE} }}"
-        f"@media (prefers-color-scheme: dark) {{ {_DARK_RULE} }}"
-    )
-
-st.markdown(f"<style>{theme_css}</style>", unsafe_allow_html=True)
+# Light/Dark/"Use system setting" is handled by Streamlit's own built-in
+# Settings menu (the app's "⋮" menu, top right) -- no custom picker or CSS
+# needed for that; see .streamlit/config.toml's toolbarMode="viewer", which
+# is what makes that Settings entry visible.
 
 # Minimal RTL + readability styling -- no CSS framework, no JS, no animations.
 st.markdown(
