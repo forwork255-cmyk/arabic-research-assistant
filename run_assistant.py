@@ -35,11 +35,12 @@ RELEVANCE_MAX_TOKENS = 3000
 # id, nothing else. Raised from 350 -> 500 -> 1000 after live tests kept
 # truncating (see project notes for the truncation investigation).
 EXTRACTION_MAX_TOKENS = 1000
-# Final synthesis: at most 2 disagreements + 3 limitations (one sentence
-# each) + a 120-word ai_synthesis, reasoning ONLY over the per-paper
-# findings (not the original abstracts). A live test with weak (MEDIUM-only)
-# evidence hit exactly 1000/1000 and truncated, so raised to 1400 for margin.
-FINAL_SYNTHESIS_MAX_TOKENS = 1400
+# Final synthesis: at most 2 disagreements + 3 limitations (1-2 sentences
+# each) + a ~200-220-word ai_synthesis, reasoning ONLY over the per-paper
+# findings (not the original abstracts). The target length was increased
+# (previously ~120 words), which pushed a live run over the old 1400 ceiling
+# and truncated -- raised to 1800 for real margin at the new target length.
+FINAL_SYNTHESIS_MAX_TOKENS = 1800
 
 # Token usage for each real model call this run, logged as
 # {"stage": str, "model": str, "input_tokens": int, "output_tokens": int}.
