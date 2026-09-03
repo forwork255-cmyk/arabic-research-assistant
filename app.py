@@ -19,7 +19,7 @@ Run with: streamlit run app.py
 import streamlit as st
 
 import run_assistant as backend
-from pipeline_runner import run_pipeline, PipelineError
+from pipeline_runner import run_pipeline, expand_selection, answer_followup, PipelineError
 from model_client import ModelClientError
 
 st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
@@ -135,6 +135,27 @@ st.markdown(
 )
 
 
+def short_id(openalex_id: str) -> str:
+    return openalex_id.rstrip("/").rsplit("/", 1)[-1]
+
+
+def format_source_links(paper_ids: list, sources: list) -> str:
+    """Turn raw OpenAlex IDs (e.g. 'W123...') into clickable source-title
+    links using the exact same Python-built bibliography shown in the
+    المصادر section -- never anything the model generated."""
+    sources_by_short_id = {short_id(s["openalex_id"]): s for s in sources}
+    links = []
+    for pid in paper_ids:
+        source = sources_by_short_id.get(pid)
+        if source and source.get("url"):
+            links.append(f"[{source['title']}]({source['url']})")
+        elif source:
+            links.append(source["title"])
+        else:
+            links.append(pid)
+    return "، ".join(links)
+
+
 def build_report_text(question: str, stages: dict) -> str:
     """
     Plain-text version of the same result shown on screen, for the download
@@ -193,25 +214,8 @@ def render_result(question: str, stages: dict) -> None:
 
     st.divider()
 
-    def short_id(openalex_id: str) -> str:
-        return openalex_id.rstrip("/").rsplit("/", 1)[-1]
-
-    sources_by_short_id = {short_id(s["openalex_id"]): s for s in synthesis["sources"]}
-
-    def format_source_links(paper_ids: list) -> str:
-        """Turn raw OpenAlex IDs (e.g. 'W123...') into clickable source-title
-        links using the exact same Python-built bibliography shown in the
-        المصادر section -- never anything the model generated."""
-        links = []
-        for pid in paper_ids:
-            source = sources_by_short_id.get(pid)
-            if source and source.get("url"):
-                links.append(f"[{source['title']}]({source['url']})")
-            elif source:
-                links.append(source["title"])
-            else:
-                links.append(pid)
-        return "، ".join(links)
+    def links_for(paper_ids: list) -> str:
+        return format_source_links(paper_ids, synthesis["sources"])
 
     # --- الدراسات المسترجعة -------------------------------------------------
     st.header("الدراسات المسترجعة")
@@ -248,14 +252,14 @@ def render_result(question: str, stages: dict) -> None:
     st.header("نتائج الدراسات")
     for item in synthesis["what_studies_found"]:
         st.markdown(f"- {item['claim']}")
-        st.caption("المصادر: " + format_source_links(item["supporting_paper_ids"]))
+        st.caption("المصادر: " + links_for(item["supporting_paper_ids"]))
 
     # --- مواضع الاختلاف -------------------------------------------------------
     if synthesis.get("where_studies_disagree"):
         st.header("مواضع الاختلاف")
         for item in synthesis["where_studies_disagree"]:
             st.markdown(f"- {item['issue']}")
-            st.caption("المصادر: " + format_source_links(item["supporting_paper_ids"]))
+            st.caption("المصادر: " + links_for(item["supporting_paper_ids"]))
 
     # --- ما لا يمكن استنتاجه --------------------------------------------------
     if synthesis.get("what_cannot_be_concluded"):
@@ -302,6 +306,75 @@ def render_result(question: str, stages: dict) -> None:
             st.write(f"**المجموع:** {total_in} input / {total_out} output tokens")
 
 
+def render_expand_and_followup(idx: int) -> None:
+    """
+    Controls shown below a completed result (live or from history): add more
+    papers to the same search, and ask a follow-up question answered ONLY
+    from the findings already extracted. Both cost real API money (same
+    remaining-searches accounting as a full search) but are much cheaper
+    than a full search, since retrieval and relevance classification are
+    never re-run.
+    """
+    entry = st.session_state["search_history"][idx]
+
+    st.divider()
+    st.subheader("توسيع النتائج")
+    if remaining_searches() <= 0:
+        st.caption("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+    elif st.button("+ أضف المزيد من الدراسات", key=f"expand_{idx}"):
+        record_search_used()
+        backend.TOKEN_USAGE_LOG.clear()
+        try:
+            with st.spinner("جارٍ إضافة المزيد من الدراسات..."):
+                new_stages = expand_selection(
+                    entry["question"], entry["stages"],
+                    backend.extract_findings, backend.synthesize_final,
+                )
+        except PipelineError as error:
+            print(f"[server-only log] PipelineError (expand): {error}")
+            st.error("تعذّر إضافة المزيد من الدراسات. قد لا توجد دراسات إضافية متاحة.")
+        except ModelClientError as error:
+            print(f"[server-only log] ModelClientError (expand): {error}")
+            st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
+        else:
+            st.session_state["search_history"][idx]["stages"] = new_stages
+            st.rerun()
+
+    st.subheader("سؤال إضافي حول هذه النتائج")
+    followup_question = st.text_input("اكتب سؤالاً إضافياً", key=f"followup_input_{idx}")
+    if st.button("اسأل", key=f"followup_btn_{idx}"):
+        if not followup_question.strip():
+            st.warning("الرجاء كتابة سؤال أولاً.")
+        elif remaining_searches() <= 0:
+            st.error("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+        else:
+            record_search_used()
+            backend.TOKEN_USAGE_LOG.clear()
+            try:
+                with st.spinner("جارٍ البحث عن إجابة..."):
+                    result = answer_followup(
+                        entry["question"], entry["stages"], followup_question,
+                        backend.answer_followup_question,
+                    )
+            except PipelineError as error:
+                print(f"[server-only log] PipelineError (followup): {error}")
+                st.error("تعذّر الإجابة على هذا السؤال بالاعتماد على النتائج الحالية.")
+            except ModelClientError as error:
+                print(f"[server-only log] ModelClientError (followup): {error}")
+                st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
+            else:
+                entry.setdefault("followups", []).append({"question": followup_question, **result})
+                st.rerun()
+
+    if entry.get("followups"):
+        for fu in entry["followups"]:
+            st.markdown(f"**س: {fu['question']}**")
+            st.write(fu["answer"])
+            if fu["supporting_paper_ids"]:
+                st.caption("المصادر: " + format_source_links(fu["supporting_paper_ids"], entry["stages"]["synthesis"]["sources"]))
+            st.write("")
+
+
 STAGE_LABELS = {
     1: "توليد الاستعلامات",
     2: "البحث في OpenAlex",
@@ -313,12 +386,14 @@ STAGE_LABELS = {
 }
 
 if st.session_state["viewing_index"] is not None:
-    # Showing a past search from this session's history -- read-only replay,
-    # no new API call.
-    entry = st.session_state["search_history"][st.session_state["viewing_index"]]
-    st.caption("عرض من سجل هذه الجلسة")
+    # Showing a completed search (either just-finished or from this
+    # session's history) -- same rendering either way, plus the
+    # expand/follow-up controls, which only apply to a completed result.
+    idx = st.session_state["viewing_index"]
+    entry = st.session_state["search_history"][idx]
     st.subheader(entry["question"])
     render_result(entry["question"], entry["stages"])
+    render_expand_and_followup(idx)
 else:
     question = st.text_area(
         "سؤالك البحثي",
@@ -388,4 +463,4 @@ else:
             elif stages is not None:
                 st.session_state["search_history"].append({"question": question, "stages": stages})
                 st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
-                render_result(question, stages)
+                st.rerun()

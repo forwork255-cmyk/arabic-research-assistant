@@ -15,7 +15,7 @@ import sys
 
 from model_client import call_model_with_usage, call_model_structured, ModelClientError, TruncatedResponseError
 from pipeline_runner import run_pipeline, PipelineError
-from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA
+from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA
 
 QUERY_GEN_MODEL = "claude-haiku-4-5"
 RELEVANCE_MODEL = "claude-sonnet-5"
@@ -41,6 +41,12 @@ EXTRACTION_MAX_TOKENS = 1000
 # (previously ~120 words), which pushed a live run over the old 1400 ceiling
 # and truncated -- raised to 1800 for real margin at the new target length.
 FINAL_SYNTHESIS_MAX_TOKENS = 1800
+# Follow-up Q&A: a single ~120-150-word answer plus a short list of paper
+# ids, reasoning only over already-extracted findings (no abstracts). This
+# is a smaller job than final synthesis (one string field, not three), so a
+# lower ceiling is appropriate.
+FOLLOWUP_MODEL = "claude-sonnet-5"
+FOLLOWUP_MAX_TOKENS = 700
 
 # Token usage for each real model call this run, logged as
 # {"stage": str, "model": str, "input_tokens": int, "output_tokens": int}.
@@ -98,6 +104,16 @@ def synthesize_final(prompt: str) -> dict:
     return _call_structured_with_usage_logging(
         prompt, model=SYNTHESIS_MODEL, max_tokens=FINAL_SYNTHESIS_MAX_TOKENS,
         schema=FINAL_SYNTHESIS_JSON_SCHEMA, stage_name="Final synthesis",
+    )
+
+
+def answer_followup_question(prompt: str) -> dict:
+    # Answers a follow-up question using ONLY the findings already extracted
+    # in a completed run -- pipeline_runner.py's answer_followup() calls
+    # this once per follow-up question asked.
+    return _call_structured_with_usage_logging(
+        prompt, model=FOLLOWUP_MODEL, max_tokens=FOLLOWUP_MAX_TOKENS,
+        schema=FOLLOWUP_JSON_SCHEMA, stage_name="Follow-up answer",
     )
 
 

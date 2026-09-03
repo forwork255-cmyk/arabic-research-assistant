@@ -263,3 +263,73 @@ def build_final_sources(selected_papers: list) -> list:
         }
         for p in selected_papers
     ]
+
+
+# ---------------------------------------------------------------------------
+# Follow-up Q&A: answers a NEW question using ONLY the already-extracted
+# findings from a completed search -- no new papers, no new retrieval, no
+# original abstracts. Same grounding discipline as Phase 2 (final synthesis),
+# just answering a specific follow-up instead of producing the standard
+# disagreements/limitations/synthesis shape.
+# ---------------------------------------------------------------------------
+
+FOLLOWUP_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string"},
+        "supporting_paper_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["answer", "supporting_paper_ids"],
+    "additionalProperties": False,
+}
+
+
+def build_followup_input(question: str, extraction_findings: list, follow_up_question: str) -> dict:
+    """Build the packet for a follow-up call: original question, the same
+    compact findings final synthesis already uses, and the new follow-up
+    question. Deliberately no abstracts, no bibliography."""
+    return {
+        "question": question,
+        "follow_up_question": follow_up_question,
+        "findings": [
+            {"paper_id": f["paper_id"], "finding": f["finding"]}
+            for f in extraction_findings
+        ],
+    }
+
+
+def validate_followup_output(output, known_paper_ids: set) -> list:
+    """Deterministic checks for a follow-up answer. known_paper_ids is the
+    set of paper IDs present in the findings this call was given -- the
+    model has no knowledge of any paper beyond that. Returns a list of
+    problems (empty = passed)."""
+    if not isinstance(output, dict):
+        return [f"Follow-up output must be a JSON object, got {type(output).__name__}"]
+
+    problems = []
+    actual_keys = set(output.keys())
+    required_keys = {"answer", "supporting_paper_ids"}
+
+    missing_keys = required_keys - actual_keys
+    if missing_keys:
+        problems.append(f"Missing required field(s): {sorted(missing_keys)}")
+    extra_keys = actual_keys - required_keys
+    if extra_keys:
+        problems.append(f"Unexpected field(s) not allowed: {sorted(extra_keys)}")
+
+    answer = output.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        problems.append("'answer' must be a non-empty string")
+
+    pids = output.get("supporting_paper_ids")
+    if not isinstance(pids, list) or not all(isinstance(p, str) for p in pids):
+        problems.append("'supporting_paper_ids' must be a list of strings (may be empty)")
+    else:
+        for pid in pids:
+            if pid not in known_paper_ids:
+                problems.append(f"cites unknown paper ID {pid}")
+
+    return problems

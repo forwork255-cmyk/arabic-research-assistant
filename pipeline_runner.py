@@ -23,7 +23,7 @@ from relevance_filter import build_relevance_report, validate_relevance_output
 from synthesis import (
     build_single_paper_extraction_input, validate_single_paper_extraction, short_id,
     build_final_synthesis_input, validate_final_synthesis_output,
-    combine_synthesis_stages,
+    combine_synthesis_stages, build_followup_input, validate_followup_output,
 )
 
 
@@ -167,6 +167,126 @@ def format_final_synthesis_prompt(final_synthesis_input: dict) -> str:
     )
 
 
+def extract_one_paper(question: str, paper: dict, extractor) -> dict:
+    """
+    Run Phase-1 extraction for ONE paper and validate it. Shared by
+    run_pipeline() (all selected papers) and expand_selection() (only the
+    newly added papers), so the extraction+validation logic lives in
+    exactly one place.
+    """
+    expected_id = short_id(paper["id"])
+    extraction_input = build_single_paper_extraction_input(question, paper)
+    extraction_prompt = format_single_paper_extraction_prompt(extraction_input)
+
+    try:
+        extraction_raw = extractor(extraction_prompt)
+    except Exception as error:
+        raise PipelineError(
+            f"Evidence extraction failed for paper {expected_id}: "
+            f"{type(error).__name__}: {error}"
+        ) from error
+
+    extraction_output = extraction_raw if isinstance(extraction_raw, dict) else parse_strict_json(extraction_raw)
+
+    extraction_problems = validate_single_paper_extraction(extraction_output, expected_id)
+    if extraction_problems:
+        raise PipelineError(
+            f"Evidence extraction for paper {expected_id} failed validation:\n"
+            + "\n".join(f" - {p}" for p in extraction_problems)
+        )
+
+    return extraction_output
+
+
+def run_final_synthesis(question: str, extraction_findings: list, selected_papers: list, synthesizer) -> dict:
+    """
+    Run Phase-2 final synthesis over already-extracted findings and combine
+    it with the deterministic bibliography. Shared by run_pipeline() and
+    expand_selection().
+    """
+    final_synthesis_input = build_final_synthesis_input(question, extraction_findings)
+    final_synthesis_prompt = format_final_synthesis_prompt(final_synthesis_input)
+    final_synthesis_raw = synthesizer(final_synthesis_prompt)
+    final_synthesis_output = (
+        final_synthesis_raw if isinstance(final_synthesis_raw, dict) else parse_strict_json(final_synthesis_raw)
+    )
+
+    known_paper_ids = {f["paper_id"] for f in extraction_findings}
+    final_problems = validate_final_synthesis_output(final_synthesis_output, known_paper_ids)
+    if final_problems:
+        raise PipelineError(
+            "Final synthesis output failed validation:\n" + "\n".join(f" - {p}" for p in final_problems)
+        )
+
+    return combine_synthesis_stages(question, extraction_findings, final_synthesis_output, selected_papers)
+
+
+def format_followup_prompt(followup_input: dict) -> str:
+    """
+    Programmatically build a follow-up-question prompt. Answers a NEW
+    question using ONLY the already-extracted findings from a completed
+    search -- no new papers, no new retrieval, no original abstracts. Kept
+    to a single short answer, not a full report.
+    """
+    return (
+        "Below is a research question, a short list of already-extracted findings "
+        "(each grounded in one source paper), and a NEW follow-up question. Using ONLY "
+        "these findings -- you do not have access to the original papers, any new papers, "
+        "or any outside knowledge -- answer the follow-up question.\n\n"
+        "GROUNDING RULES (strict):\n"
+        "1. Answer using only the findings below.\n"
+        "2. Every paper_id in supporting_paper_ids must come only from the findings below.\n"
+        "3. Never invent a result, number, sample size, method, country, effect size, quotation, "
+        "or conclusion beyond what the findings state.\n"
+        "4. Never convert correlation into causation.\n"
+        "5. If the findings do not contain enough information to answer the follow-up question, "
+        "say so explicitly in the answer instead of guessing, and leave supporting_paper_ids empty "
+        "or limited to whatever partial evidence exists.\n\n"
+        "OUTPUT LIMITS:\n"
+        "- answer: approximately 120-150 Arabic words, no introduction or framing sentences.\n"
+        "- supporting_paper_ids: only paper_id values that appear in the findings below.\n\n"
+        f"INPUT (JSON):\n{json.dumps(followup_input, ensure_ascii=False, indent=2)}\n\n"
+        "Write the answer in Arabic."
+    )
+
+
+def _extraction_findings_from_stages(stages: dict) -> list:
+    """
+    Reconstruct the compact {paper_id, finding} list from an already-completed
+    run's synthesis output, instead of re-running extraction. Works because
+    combine_synthesis_stages() always builds what_studies_found as exactly
+    one {claim, supporting_paper_ids: [paper_id]} entry per finding.
+    """
+    return [
+        {"paper_id": item["supporting_paper_ids"][0], "finding": item["claim"]}
+        for item in stages["synthesis"]["what_studies_found"]
+    ]
+
+
+def answer_followup(question: str, stages: dict, follow_up_question: str, followup_answerer) -> dict:
+    """
+    Answer a follow-up question using ONLY the findings already extracted in
+    a completed run -- no new API calls beyond this one. Returns
+    {"answer": str, "supporting_paper_ids": list}. Raises PipelineError on
+    malformed or ungrounded output, same fail-safe rules as everywhere else.
+    """
+    extraction_findings = _extraction_findings_from_stages(stages)
+    followup_input = build_followup_input(question, extraction_findings, follow_up_question)
+    followup_prompt = format_followup_prompt(followup_input)
+
+    followup_raw = followup_answerer(followup_prompt)
+    followup_output = followup_raw if isinstance(followup_raw, dict) else parse_strict_json(followup_raw)
+
+    known_paper_ids = {f["paper_id"] for f in extraction_findings}
+    problems = validate_followup_output(followup_output, known_paper_ids)
+    if problems:
+        raise PipelineError(
+            "Follow-up answer failed validation:\n" + "\n".join(f" - {p}" for p in problems)
+        )
+
+    return followup_output
+
+
 def run_pipeline(question: str, query_generator, relevance_classifier, extractor, synthesizer, progress=None) -> dict:
     """
     Run the full workflow. query_generator, relevance_classifier, extractor,
@@ -260,66 +380,61 @@ def run_pipeline(question: str, query_generator, relevance_classifier, extractor
     # already in flight), so a failed run may spend slightly more on a few
     # extra small Haiku calls than before -- negligible given how cheap each
     # call is, and worth it for the speed gain.
-    def run_one_extraction(paper):
-        expected_id = short_id(paper["id"])
-        extraction_input = build_single_paper_extraction_input(question, paper)
-        extraction_prompt = format_single_paper_extraction_prompt(extraction_input)
-
-        try:
-            extraction_raw = extractor(extraction_prompt)
-        except Exception as error:
-            raise PipelineError(
-                f"Evidence extraction failed for paper {expected_id}: "
-                f"{type(error).__name__}: {error}"
-            ) from error
-
-        if isinstance(extraction_raw, dict):
-            extraction_output = extraction_raw
-        else:
-            extraction_output = parse_strict_json(extraction_raw)
-
-        extraction_problems = validate_single_paper_extraction(
-            extraction_output,
-            expected_id,
-        )
-
-        if extraction_problems:
-            raise PipelineError(
-                f"Evidence extraction for paper {expected_id} failed validation:\n"
-                + "\n".join(f" - {p}" for p in extraction_problems)
-            )
-
-        return extraction_output
-
     with ThreadPoolExecutor(max_workers=len(selected_papers)) as executor:
         # .map() preserves selected_papers' order in the results, even
         # though the calls themselves run concurrently.
-        extraction_findings = list(executor.map(run_one_extraction, selected_papers))
+        extraction_findings = list(executor.map(lambda p: extract_one_paper(question, p, extractor), selected_papers))
 
     report(5, f"Evidence extraction complete — {len(extraction_findings)} papers processed")
 
     # Stage 6b: final synthesis (AI boundary) -- Phase 2 of synthesis
-    final_synthesis_input = build_final_synthesis_input(question, extraction_findings)
-    final_synthesis_prompt = format_final_synthesis_prompt(final_synthesis_input)
-    final_synthesis_raw = synthesizer(final_synthesis_prompt)
-    if isinstance(final_synthesis_raw, dict):
-        final_synthesis_output = final_synthesis_raw
-    else:
-        final_synthesis_output = parse_strict_json(final_synthesis_raw)
-
-    known_paper_ids = {f["paper_id"] for f in extraction_findings}
-    final_problems = validate_final_synthesis_output(final_synthesis_output, known_paper_ids)
-    if final_problems:
-        raise PipelineError(
-            "Final synthesis output failed validation:\n"
-            + "\n".join(f" - {p}" for p in final_problems)
-        )
+    stages["synthesis"] = run_final_synthesis(question, extraction_findings, selected_papers, synthesizer)
     report(6, "Final synthesis complete")
     report(7, "Validation passed")
 
-    # Both phases validated -- combine deterministically. Python owns the
-    # question and the entire bibliography (built solely from the original
-    # OpenAlex records); nothing bibliographic ever came from the model.
-    stages["synthesis"] = combine_synthesis_stages(question, extraction_findings, final_synthesis_output, selected_papers)
-
     return stages
+
+
+EXPAND_INCREMENT = 2  # how many additional papers one "expand" click adds
+
+
+def expand_selection(question: str, stages: dict, extractor, synthesizer, additional_count: int = EXPAND_INCREMENT) -> dict:
+    """
+    Add up to `additional_count` more papers (not already selected) to an
+    already-completed run, in relevance order (HIGH, then MEDIUM, then LOW).
+    Extraction runs ONLY for the newly added papers -- existing findings are
+    reused, not re-fetched, so this is cheap: a couple of small Haiku calls
+    plus one Sonnet synthesis call, no retrieval or relevance re-classification.
+
+    Returns a new stages dict with the same shape as run_pipeline()'s
+    return value, so it's a drop-in replacement in a stored search-history
+    entry. Raises PipelineError (no additional papers available, or a
+    validation failure) using the exact same fail-safe rules as run_pipeline().
+    """
+    search_report = stages["search_report"]
+    relevance_report = stages["relevance_report"]
+    selected_papers = stages["selected_papers"]
+
+    already_selected_ids = {p["id"] for p in selected_papers}
+    relevance_by_id = {p["openalex_id"]: p["relevance"] for p in relevance_report["papers"]}
+    relevance_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+
+    candidates = [p for p in search_report["unique_papers"] if p["id"] not in already_selected_ids]
+    candidates.sort(key=lambda p: relevance_order.get(relevance_by_id.get(p["id"]), 3))
+    new_papers = candidates[:additional_count]
+
+    if not new_papers:
+        raise PipelineError("لا توجد دراسات إضافية متاحة للإضافة إلى هذا البحث.")
+
+    with ThreadPoolExecutor(max_workers=len(new_papers)) as executor:
+        new_findings = list(executor.map(lambda p: extract_one_paper(question, p, extractor), new_papers))
+
+    existing_findings = _extraction_findings_from_stages(stages)
+
+    combined_selected_papers = selected_papers + new_papers
+    combined_findings = existing_findings + new_findings
+
+    new_stages = dict(stages)
+    new_stages["selected_papers"] = combined_selected_papers
+    new_stages["synthesis"] = run_final_synthesis(question, combined_findings, combined_selected_papers, synthesizer)
+    return new_stages
