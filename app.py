@@ -51,6 +51,28 @@ def check_password() -> bool:
 if not check_password():
     st.stop()
 
+THEME_OPTIONS = {"تلقائي (حسب الجهاز)": "auto", "فاتح": "light", "داكن": "dark"}
+
+theme_choice = st.selectbox("المظهر", options=list(THEME_OPTIONS.keys()), key="theme_choice")
+theme_mode = THEME_OPTIONS[theme_choice]
+
+# Background/text colors per mode. "auto" uses a CSS media query so it
+# follows the visitor's own device setting -- no JS, no extra dependency.
+_LIGHT_RULE = ".stApp { background-color: #ffffff !important; color: #111111 !important; }"
+_DARK_RULE = ".stApp { background-color: #0e1117 !important; color: #f5f5f5 !important; }"
+
+if theme_mode == "light":
+    theme_css = _LIGHT_RULE
+elif theme_mode == "dark":
+    theme_css = _DARK_RULE
+else:
+    theme_css = (
+        f"@media (prefers-color-scheme: light) {{ {_LIGHT_RULE} }}"
+        f"@media (prefers-color-scheme: dark) {{ {_DARK_RULE} }}"
+    )
+
+st.markdown(f"<style>{theme_css}</style>", unsafe_allow_html=True)
+
 # Minimal RTL + readability styling -- no CSS framework, no JS, no animations.
 st.markdown(
     """

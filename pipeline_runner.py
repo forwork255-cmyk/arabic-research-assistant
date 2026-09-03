@@ -16,6 +16,7 @@ Nothing here duplicates that logic.
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from search_pipeline import search_multiple_queries
 from relevance_filter import build_relevance_report, validate_relevance_output
@@ -249,10 +250,16 @@ def run_pipeline(question: str, query_generator, relevance_classifier, extractor
     stages["selected_papers"] = selected_papers
     report(4, f"Paper selection complete — {len(selected_papers)} selected")
 
-    # Stage 5: evidence extraction, one call per selected paper
-    extraction_findings = []
-
-    for paper in selected_papers:
+    # Stage 5: evidence extraction, one call per selected paper. The papers
+    # are fully independent of each other, so the calls run CONCURRENTLY
+    # (not one-by-one) to cut this stage's wall-clock time -- this changes
+    # nothing about grounding or validation, only how the calls are
+    # scheduled. Trade-off: unlike the old sequential version, a failure on
+    # one paper no longer skips calling the remaining papers (they're
+    # already in flight), so a failed run may spend slightly more on a few
+    # extra small Haiku calls than before -- negligible given how cheap each
+    # call is, and worth it for the speed gain.
+    def run_one_extraction(paper):
         expected_id = short_id(paper["id"])
         extraction_input = build_single_paper_extraction_input(question, paper)
         extraction_prompt = format_single_paper_extraction_prompt(extraction_input)
@@ -281,7 +288,12 @@ def run_pipeline(question: str, query_generator, relevance_classifier, extractor
                 + "\n".join(f" - {p}" for p in extraction_problems)
             )
 
-        extraction_findings.append(extraction_output)
+        return extraction_output
+
+    with ThreadPoolExecutor(max_workers=len(selected_papers)) as executor:
+        # .map() preserves selected_papers' order in the results, even
+        # though the calls themselves run concurrently.
+        extraction_findings = list(executor.map(run_one_extraction, selected_papers))
 
     report(5, f"Evidence extraction complete — {len(extraction_findings)} papers processed")
 
