@@ -281,8 +281,9 @@ FOLLOWUP_JSON_SCHEMA = {
             "type": "array",
             "items": {"type": "string"},
         },
+        "sufficient": {"type": "boolean"},
     },
-    "required": ["answer", "supporting_paper_ids"],
+    "required": ["answer", "supporting_paper_ids", "sufficient"],
     "additionalProperties": False,
 }
 
@@ -311,7 +312,7 @@ def validate_followup_output(output, known_paper_ids: set) -> list:
 
     problems = []
     actual_keys = set(output.keys())
-    required_keys = {"answer", "supporting_paper_ids"}
+    required_keys = {"answer", "supporting_paper_ids", "sufficient"}
 
     missing_keys = required_keys - actual_keys
     if missing_keys:
@@ -331,5 +332,8 @@ def validate_followup_output(output, known_paper_ids: set) -> list:
         for pid in pids:
             if pid not in known_paper_ids:
                 problems.append(f"cites unknown paper ID {pid}")
+
+    if not isinstance(output.get("sufficient"), bool):
+        problems.append("'sufficient' must be a boolean")
 
     return problems

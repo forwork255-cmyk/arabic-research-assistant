@@ -24,6 +24,7 @@ from synthesis import (
     build_single_paper_extraction_input, validate_single_paper_extraction, short_id,
     build_final_synthesis_input, validate_final_synthesis_output,
     combine_synthesis_stages, build_followup_input, validate_followup_output,
+    build_final_sources,
 )
 
 
@@ -241,7 +242,11 @@ def format_followup_prompt(followup_input: dict) -> str:
         "4. Never convert correlation into causation.\n"
         "5. If the findings do not contain enough information to answer the follow-up question, "
         "say so explicitly in the answer instead of guessing, and leave supporting_paper_ids empty "
-        "or limited to whatever partial evidence exists.\n\n"
+        "or limited to whatever partial evidence exists.\n"
+        "6. Set sufficient=true only if the findings below genuinely let you answer the follow-up "
+        "question with real, specific content. Set sufficient=false if the findings are unrelated, "
+        "insufficient, or you had to say 'not enough information' in the answer -- do not set it "
+        "true just because you wrote a polite-sounding answer.\n\n"
         "OUTPUT LIMITS:\n"
         "- answer: approximately 120-150 Arabic words, no introduction or framing sentences.\n"
         "- supporting_paper_ids: only paper_id values that appear in the findings below.\n\n"
@@ -284,6 +289,81 @@ def answer_followup(question: str, stages: dict, follow_up_question: str, follow
             "Follow-up answer failed validation:\n" + "\n".join(f" - {p}" for p in problems)
         )
 
+    return followup_output
+
+
+FOLLOWUP_RESEARCH_MAX_PAPERS = 3  # kept small -- this path costs roughly a full search each time
+
+
+def research_followup(
+    original_question: str, stages: dict, follow_up_question: str,
+    query_generator, relevance_classifier, extractor, followup_answerer,
+) -> dict:
+    """
+    Escalation path for a follow-up question the cheap answer_followup()
+    already found insufficient (sufficient=False): runs a small, FOCUSED
+    sub-search scoped to the follow-up question itself (new queries -> new
+    OpenAlex search -> new relevance classification -> select up to
+    FOLLOWUP_RESEARCH_MAX_PAPERS papers -> extract), then answers again using
+    the ORIGINAL findings combined with these newly found ones.
+
+    This is the expensive path -- it repeats query generation, retrieval,
+    and relevance classification, so it costs roughly the same as a full new
+    search. It is meant to be triggered deliberately (a user clicking an
+    explicit "search for new studies" button), never automatically.
+
+    Returns the same shape as answer_followup(), plus "new_sources": the
+    deterministic bibliography for the newly found papers (Python-built,
+    never model-generated), so the caller can render clickable links for them.
+    """
+    query_prompt = format_query_generation_prompt(follow_up_question)
+    query_raw = query_generator(query_prompt)
+    query_json = parse_strict_json(query_raw)
+    if "english_queries" not in query_json or "arabic_queries" not in query_json:
+        raise PipelineError(f"Query generation output missing required keys: {query_json}")
+    all_queries = query_json["english_queries"] + query_json["arabic_queries"]
+
+    search_report = search_multiple_queries(all_queries)
+    candidate_papers = search_report["unique_papers"]
+    if not candidate_papers:
+        raise PipelineError("لم يتم العثور على دراسات جديدة متعلقة بهذا السؤال الإضافي.")
+
+    relevance_prompt = format_relevance_prompt(follow_up_question, candidate_papers)
+    relevance_raw = relevance_classifier(relevance_prompt)
+    relevance_array = parse_strict_json(relevance_raw)
+    relevance_problems = validate_relevance_output(relevance_array, candidate_papers)
+    if relevance_problems:
+        raise PipelineError(
+            "Relevance classification output failed validation:\n"
+            + "\n".join(f" - {p}" for p in relevance_problems)
+        )
+    classifications = {item["openalex_id"]: item for item in relevance_array}
+    relevance_report = build_relevance_report(follow_up_question, candidate_papers, classifications)
+
+    selected_ids = set(relevance_report["selected_for_synthesis"][:FOLLOWUP_RESEARCH_MAX_PAPERS])
+    if not selected_ids:
+        raise PipelineError("لم يتم العثور على دراسات ذات صلة كافية بهذا السؤال الإضافي.")
+    new_papers = [p for p in candidate_papers if p["id"] in selected_ids]
+
+    with ThreadPoolExecutor(max_workers=len(new_papers)) as executor:
+        new_findings = list(executor.map(lambda p: extract_one_paper(follow_up_question, p, extractor), new_papers))
+
+    existing_findings = _extraction_findings_from_stages(stages)
+    combined_findings = existing_findings + new_findings
+
+    followup_input = build_followup_input(original_question, combined_findings, follow_up_question)
+    followup_prompt = format_followup_prompt(followup_input)
+    followup_raw = followup_answerer(followup_prompt)
+    followup_output = followup_raw if isinstance(followup_raw, dict) else parse_strict_json(followup_raw)
+
+    known_paper_ids = {f["paper_id"] for f in combined_findings}
+    problems = validate_followup_output(followup_output, known_paper_ids)
+    if problems:
+        raise PipelineError(
+            "Follow-up answer failed validation:\n" + "\n".join(f" - {p}" for p in problems)
+        )
+
+    followup_output["new_sources"] = build_final_sources(new_papers)
     return followup_output
 
 

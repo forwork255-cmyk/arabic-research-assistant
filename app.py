@@ -19,7 +19,7 @@ Run with: streamlit run app.py
 import streamlit as st
 
 import run_assistant as backend
-from pipeline_runner import run_pipeline, expand_selection, answer_followup, PipelineError
+from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
 st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
@@ -367,11 +367,37 @@ def render_expand_and_followup(idx: int) -> None:
                 st.rerun()
 
     if entry.get("followups"):
-        for fu in entry["followups"]:
+        for i, fu in enumerate(entry["followups"]):
             st.markdown(f"**س: {fu['question']}**")
             st.write(fu["answer"])
+            all_sources = entry["stages"]["synthesis"]["sources"] + fu.get("new_sources", [])
             if fu["supporting_paper_ids"]:
-                st.caption("المصادر: " + format_source_links(fu["supporting_paper_ids"], entry["stages"]["synthesis"]["sources"]))
+                st.caption("المصادر: " + format_source_links(fu["supporting_paper_ids"], all_sources))
+
+            if fu.get("sufficient") is False and not fu.get("researched"):
+                st.caption("لم تكن النتائج الحالية كافية للإجابة على هذا السؤال.")
+                if remaining_searches() <= 0:
+                    st.caption("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+                elif st.button("ابحث عن دراسات جديدة لهذا السؤال (تكلفة إضافية)", key=f"research_followup_{idx}_{i}"):
+                    record_search_used()
+                    backend.TOKEN_USAGE_LOG.clear()
+                    try:
+                        with st.spinner("جارٍ البحث عن دراسات جديدة..."):
+                            new_result = research_followup(
+                                entry["question"], entry["stages"], fu["question"],
+                                backend.generate_queries, backend.classify_relevance,
+                                backend.extract_findings, backend.answer_followup_question,
+                            )
+                    except PipelineError as error:
+                        print(f"[server-only log] PipelineError (research_followup): {error}")
+                        st.error("تعذّر العثور على دراسات جديدة مناسبة لهذا السؤال.")
+                    except ModelClientError as error:
+                        print(f"[server-only log] ModelClientError (research_followup): {error}")
+                        st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
+                    else:
+                        new_result["researched"] = True
+                        entry["followups"][i] = {"question": fu["question"], **new_result}
+                        st.rerun()
             st.write("")
 
 
