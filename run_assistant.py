@@ -16,6 +16,12 @@ import sys
 from model_client import call_model_with_usage, call_model_structured, ModelClientError, TruncatedResponseError
 from pipeline_runner import run_pipeline, PipelineError
 from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA
+from moderation import MODERATION_JSON_SCHEMA
+
+# A small, fast classification task -- not cross-paper reasoning -- so Haiku
+# with a low token ceiling (one bool + one short Arabic sentence).
+MODERATION_MODEL = "claude-haiku-4-5"
+MODERATION_MAX_TOKENS = 200
 
 QUERY_GEN_MODEL = "claude-haiku-4-5"
 RELEVANCE_MODEL = "claude-sonnet-5"
@@ -51,6 +57,18 @@ FOLLOWUP_MAX_TOKENS = 700
 # Token usage for each real model call this run, logged as
 # {"stage": str, "model": str, "input_tokens": int, "output_tokens": int}.
 TOKEN_USAGE_LOG = []
+
+
+def check_question_moderation(prompt: str) -> dict:
+    # A safety check run BEFORE the real pipeline -- see moderation.py.
+    # Deliberately NOT logged into TOKEN_USAGE_LOG's per-search total: it
+    # runs even for questions that get rejected (and thus never reach the
+    # real pipeline), so it's accounted for separately.
+    parsed, _usage = call_model_structured(
+        prompt, model=MODERATION_MODEL, max_tokens=MODERATION_MAX_TOKENS,
+        schema=MODERATION_JSON_SCHEMA,
+    )
+    return parsed
 
 
 def generate_queries(prompt: str) -> str:

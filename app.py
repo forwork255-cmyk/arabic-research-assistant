@@ -22,6 +22,7 @@ import run_assistant as backend
 import auth
 import history
 import global_limit
+import moderation
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
@@ -118,6 +119,28 @@ def no_searches_left_message() -> str:
     if global_limit.global_limit_reached():
         return "بلغ التطبيق الحد الأقصى المؤقت لعدد عمليات البحث. يرجى المحاولة لاحقاً."
     return "لقد استنفدت عدد عمليات البحث المسموح بها لحسابك."
+
+
+def is_question_appropriate(question: str) -> tuple:
+    """
+    Safety check run BEFORE the real pipeline/follow-up call and before it
+    counts against the search limit (see moderation.py). Fails OPEN (allows
+    the question through) if the moderation call itself errors or returns a
+    malformed result -- a legitimate user should not be blocked by an
+    infrastructure hiccup; the per-account and site-wide search caps remain
+    the primary defense against cost abuse.
+    """
+    try:
+        result = backend.check_question_moderation(moderation.format_moderation_prompt(question))
+    except ModelClientError as error:
+        print(f"[server-only log] Moderation check failed, allowing through: {error}")
+        return True, None
+    if not moderation.validate_moderation_output(result):
+        print(f"[server-only log] Moderation returned malformed output, allowing through: {result}")
+        return True, None
+    if result["appropriate"]:
+        return True, None
+    return False, result["reason"]
 
 
 # Light/Dark/"Use system setting" is handled by Streamlit's own built-in
@@ -413,6 +436,10 @@ def handle_followup_input(idx: int, followup_question: str) -> None:
     if remaining_searches() <= 0:
         st.error(no_searches_left_message())
         return
+    appropriate, reason = is_question_appropriate(followup_question)
+    if not appropriate:
+        st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
+        return
     record_search_used()
     backend.TOKEN_USAGE_LOG.clear()
     try:
@@ -529,4 +556,8 @@ else:
         else:
             st.chat_message("user").write(new_question)
             with st.chat_message("assistant"):
-                run_new_search(new_question)
+                appropriate, reason = is_question_appropriate(new_question)
+                if not appropriate:
+                    st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
+                else:
+                    run_new_search(new_question)
