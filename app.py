@@ -148,7 +148,12 @@ with st.sidebar:
                     st.error(str(e))
 
 
-_SUBSCRIBED_SENTINEL = 999_999  # effectively unlimited for a manually-subscribed account
+_SUBSCRIBED_SENTINEL = 999_999  # effectively unlimited for a manually-subscribed account (or the owner)
+
+
+def is_owner() -> bool:
+    owner_email = st.secrets.get("OWNER_EMAIL", "")
+    return bool(owner_email) and st.session_state["user_email"] == owner_email.strip().lower()
 
 
 def remaining_searches() -> int:
@@ -157,10 +162,13 @@ def remaining_searches() -> int:
     site-wide emergency cap (global_limit.py) has been reached, regardless of
     this account's own remaining allowance. That cap protects the real API
     budget from being drained by many accounts/sign-ups at once, not just one,
-    and applies even to subscribed accounts.
+    and applies even to subscribed accounts AND the owner -- a real budget
+    safety net shouldn't have an exception for anyone, including the owner.
     """
     if global_limit.global_limit_reached():
         return 0
+    if is_owner():
+        return _SUBSCRIBED_SENTINEL
     account = auth.get_account(st.session_state["user_email"])
     if account is None:
         return 0
@@ -181,8 +189,10 @@ def no_searches_left_message() -> str:
 
 
 def searches_caption() -> str:
-    """What to show near the chat input: subscription status if subscribed,
-    otherwise the remaining-searches count."""
+    """What to show near the chat input: owner/subscription status if
+    applicable, otherwise the remaining-searches count."""
+    if is_owner():
+        return "أنت المالك — وصول غير محدود (يبقى محمياً بحد الأمان العام للتطبيق)."
     account = auth.get_account(st.session_state["user_email"])
     if account and auth.is_subscribed(account):
         until = account["subscribed_until"].strftime("%Y-%m-%d")
