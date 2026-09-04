@@ -17,6 +17,8 @@ Each account document:
         "subscription_search_limit": int,          # searches allowed for the CURRENT paid period
         "subscription_used": int,                  # searches used in the current paid period
         "plan": str,                               # "normal" | "pro" | "max" -- see run_assistant.PLAN_MODELS
+        "session_token": str,                      # current "remember me" token, or "" once logged out
+        "session_token_created_at": datetime,      # for expiring old tokens
     }
 
 A "subscribed" account (see grant_subscription/is_subscribed below) gets a
@@ -31,6 +33,7 @@ applies on top of this for every account, subscribed or not.
 """
 
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -39,6 +42,15 @@ from firebase_admin import firestore
 from db import _get_client
 
 DEFAULT_SEARCH_LIMIT = 5
+
+# "Remember me" across browser refreshes: a random opaque token is stored on
+# the account and also placed in the page URL (?t=...), so app.py can
+# silently restore the session on load instead of asking for the password
+# again every time. Only the single most-recently-issued token is valid --
+# logging in again overwrites it, so this is one "remembered" session per
+# account, not a token list. Expires after SESSION_TOKEN_MAX_AGE_DAYS so a
+# stale/copied link doesn't work forever.
+SESSION_TOKEN_MAX_AGE_DAYS = 30
 
 # Kept as plain strings here (not imported from run_assistant.py) to keep
 # auth.py free of any model-calling dependency -- it only needs to validate
@@ -98,6 +110,38 @@ def get_account(email: str) -> dict | None:
     email = email.strip().lower()
     doc = _accounts().document(email).get()
     return doc.to_dict() if doc.exists else None
+
+
+def create_session_token(email: str) -> str:
+    """Issues a new "remember me" token for this account and returns it, to
+    be stored in the page URL by app.py. Overwrites any previous token."""
+    email = email.strip().lower()
+    token = secrets.token_urlsafe(32)
+    _accounts().document(email).set({
+        "session_token": token,
+        "session_token_created_at": datetime.now(timezone.utc),
+    }, merge=True)
+    return token
+
+
+def verify_session_token(token: str) -> str | None:
+    """Returns the account email for a still-valid "remember me" token, or
+    None if it's missing, doesn't match any account, or has expired."""
+    if not token:
+        return None
+    matches = _accounts().where("session_token", "==", token).limit(1).stream()
+    for doc in matches:
+        data = doc.to_dict()
+        created_at = data.get("session_token_created_at")
+        if created_at and datetime.now(timezone.utc) - created_at <= timedelta(days=SESSION_TOKEN_MAX_AGE_DAYS):
+            return doc.id
+    return None
+
+
+def clear_session_token(email: str) -> None:
+    """Invalidates the account's "remember me" token (e.g. on logout)."""
+    email = email.strip().lower()
+    _accounts().document(email).set({"session_token": ""}, merge=True)
 
 
 def increment_used(email: str) -> None:

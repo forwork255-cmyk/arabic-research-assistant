@@ -58,10 +58,34 @@ def _read_legal_doc(filename: str) -> str:
     return text
 
 
+def _start_session(email: str) -> None:
+    """Marks this browser session as logged in AND issues a "remember me"
+    token stored in the page URL (?t=...), so a page refresh restores the
+    session automatically instead of asking to log in again every time."""
+    email = email.strip().lower()
+    st.session_state["authenticated"] = True
+    st.session_state["user_email"] = email
+    st.query_params["t"] = auth.create_session_token(email)
+
+
 def show_login_and_signup() -> bool:
-    """Email/password sign-up and login, backed by Firestore (see auth.py)."""
+    """Email/password sign-up and login, backed by Firestore (see auth.py).
+    Also tries to silently restore a previous session from the "remember me"
+    token in the page URL before falling back to showing the login form."""
     if st.session_state.get("authenticated"):
         return True
+
+    if not st.session_state.get("_tried_auto_login"):
+        st.session_state["_tried_auto_login"] = True
+        token = st.query_params.get("t")
+        if token:
+            email = auth.verify_session_token(token)
+            if email:
+                st.session_state["authenticated"] = True
+                st.session_state["user_email"] = email
+                return True
+            # Stale/invalid token -- drop it so we don't keep re-checking it.
+            del st.query_params["t"]
 
     st.title("📚 مساعد البحث العلمي العربي")
     login_tab, signup_tab = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
@@ -71,8 +95,7 @@ def show_login_and_signup() -> bool:
         password = st.text_input("كلمة المرور", type="password", key="login_password")
         if st.button("دخول"):
             if auth.verify_login(email, password):
-                st.session_state["authenticated"] = True
-                st.session_state["user_email"] = email.strip().lower()
+                _start_session(email)
                 st.rerun()
             else:
                 st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
@@ -91,8 +114,7 @@ def show_login_and_signup() -> bool:
             else:
                 try:
                     auth.create_account(new_email, new_password)
-                    st.session_state["authenticated"] = True
-                    st.session_state["user_email"] = new_email.strip().lower()
+                    _start_session(new_email)
                     st.rerun()
                 except auth.AuthError as e:
                     st.error(str(e))
@@ -130,7 +152,11 @@ with st.sidebar:
         def _render_history_row(i: int) -> None:
             entry = st.session_state["search_history"][i]
             label = entry["question"][:40] + ("…" if len(entry["question"]) > 40 else "")
-            col_open, col_star, col_delete = st.columns([7, 1, 1])
+            confirm_key = f"confirm_delete_{i}"
+            if st.session_state.get(confirm_key):
+                col_open, col_star, col_confirm, col_cancel = st.columns([5, 1, 1, 1])
+            else:
+                col_open, col_star, col_delete = st.columns([6, 1, 1])
             with col_open:
                 if st.button(label, key=f"history_{i}", use_container_width=True):
                     st.session_state["viewing_index"] = i
@@ -138,14 +164,10 @@ with st.sidebar:
             with col_star:
                 star_icon = "⭐" if entry.get("starred") else "☆"
                 if st.button(star_icon, key=f"star_{i}", help="تمييز كمفضلة"):
-                    new_starred = not entry.get("starred", False)
-                    entry["starred"] = new_starred
-                    if entry.get("id"):
-                        history.set_starred(st.session_state["user_email"], entry["id"], new_starred)
+                    toggle_star(i)
                     st.rerun()
-            with col_delete:
-                confirm_key = f"confirm_delete_{i}"
-                if st.session_state.get(confirm_key):
+            if st.session_state.get(confirm_key):
+                with col_confirm:
                     if st.button("✔", key=f"delete_confirm_{i}", help="تأكيد الحذف نهائياً"):
                         if entry.get("id"):
                             history.delete_entry(st.session_state["user_email"], entry["id"])
@@ -156,8 +178,13 @@ with st.sidebar:
                             st.session_state["viewing_index"] -= 1
                         st.session_state.pop(confirm_key, None)
                         st.rerun()
-                else:
-                    if st.button("🗑", key=f"delete_{i}", help="حذف"):
+                with col_cancel:
+                    if st.button("✖", key=f"delete_cancel_{i}", help="إلغاء"):
+                        st.session_state.pop(confirm_key, None)
+                        st.rerun()
+            else:
+                with col_delete:
+                    if st.button("✕", key=f"delete_{i}", help="حذف"):
                         st.session_state[confirm_key] = True
                         st.rerun()
 
@@ -191,6 +218,13 @@ with st.sidebar:
                     st.success(f"تم منح الاشتراك ({grant_plan}) لـ {grant_email.strip().lower()}.")
                 except auth.AuthError as e:
                     st.error(str(e))
+
+    st.divider()
+    if st.button("تسجيل الخروج", use_container_width=True):
+        auth.clear_session_token(st.session_state["user_email"])
+        st.query_params.clear()
+        st.session_state.clear()
+        st.rerun()
 
 
 _OWNER_SENTINEL = 999_999  # effectively unlimited -- the owner only, not regular subscribers
@@ -502,6 +536,14 @@ def _persist_entry(idx: int) -> None:
         )
 
 
+def toggle_star(idx: int) -> None:
+    entry = st.session_state["search_history"][idx]
+    new_starred = not entry.get("starred", False)
+    entry["starred"] = new_starred
+    if entry.get("id"):
+        history.set_starred(st.session_state["user_email"], entry["id"], new_starred)
+
+
 def render_expand_button(idx: int) -> None:
     """'+ أضف المزيد من الدراسات': re-runs synthesis over additional
     already-retrieved papers. Costs real API money (same remaining-searches
@@ -784,6 +826,13 @@ if st.session_state["viewing_index"] is not None:
     # full report as the first exchange, then any follow-up Q&A after it.
     idx = st.session_state["viewing_index"]
     entry = st.session_state["search_history"][idx]
+
+    star_col, _ = st.columns([1, 9])
+    with star_col:
+        star_icon = "⭐ مفضلة" if entry.get("starred") else "☆ تمييز"
+        if st.button(star_icon, key=f"view_star_{idx}"):
+            toggle_star(idx)
+            st.rerun()
 
     st.chat_message("user").write(entry["question"])
     with st.chat_message("assistant"):
