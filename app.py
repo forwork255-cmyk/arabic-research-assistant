@@ -162,13 +162,20 @@ with st.sidebar:
                     st.session_state["viewing_index"] = i
                     st.rerun()
             with col_star:
-                star_icon = "⭐" if entry.get("starred") else "☆"
-                if st.button(star_icon, key=f"star_{i}", help="تمييز كمفضلة"):
+                # Full-color emoji only (not plain text symbols like "☆"/"✕") --
+                # plain symbol glyphs were rendering as blank/invisible boxes for
+                # the user, while emoji render reliably via the OS emoji font.
+                # The starred/not-starred states use Streamlit's own button
+                # "type" styling instead of an outline-star glyph.
+                if st.button(
+                    "⭐", key=f"star_{i}", help="إزالة من المفضلة" if entry.get("starred") else "تمييز كمفضلة",
+                    type="primary" if entry.get("starred") else "secondary",
+                ):
                     toggle_star(i)
                     st.rerun()
             if st.session_state.get(confirm_key):
                 with col_confirm:
-                    if st.button("✔", key=f"delete_confirm_{i}", help="تأكيد الحذف نهائياً"):
+                    if st.button("✅", key=f"delete_confirm_{i}", help="تأكيد الحذف نهائياً"):
                         if entry.get("id"):
                             history.delete_entry(st.session_state["user_email"], entry["id"])
                         del st.session_state["search_history"][i]
@@ -179,12 +186,12 @@ with st.sidebar:
                         st.session_state.pop(confirm_key, None)
                         st.rerun()
                 with col_cancel:
-                    if st.button("✖", key=f"delete_cancel_{i}", help="إلغاء"):
+                    if st.button("❌", key=f"delete_cancel_{i}", help="إلغاء"):
                         st.session_state.pop(confirm_key, None)
                         st.rerun()
             else:
                 with col_delete:
-                    if st.button("✕", key=f"delete_{i}", help="حذف"):
+                    if st.button("🗑️", key=f"delete_{i}", help="حذف"):
                         st.session_state[confirm_key] = True
                         st.rerun()
 
@@ -827,10 +834,10 @@ if st.session_state["viewing_index"] is not None:
     idx = st.session_state["viewing_index"]
     entry = st.session_state["search_history"][idx]
 
-    star_col, _ = st.columns([1, 9])
+    star_col, _ = st.columns([2, 8])
     with star_col:
-        star_icon = "⭐ مفضلة" if entry.get("starred") else "☆ تمييز"
-        if st.button(star_icon, key=f"view_star_{idx}"):
+        label = "⭐ مفضلة" if entry.get("starred") else "⭐ تمييز كمفضلة"
+        if st.button(label, key=f"view_star_{idx}", type="primary" if entry.get("starred") else "secondary"):
             toggle_star(idx)
             st.rerun()
 
