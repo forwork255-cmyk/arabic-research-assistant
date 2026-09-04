@@ -32,8 +32,8 @@ The original plan had **14 items across 4 phases**. Only **9 are recorded below*
 
 ## Known open issues (not on the original roadmap, found during testing)
 
-- [ ] Intermittent `PipelineError` on some questions (seen live once, cause not yet diagnosed — no server log access to see the exact message)
-- [ ] Streamlit Cloud sometimes serves a stale/partially-reloaded module after a push (hit twice now: once with `FIREBASE_KEY`, once with `auth.is_subscribed`) — fix is always a full Reboot from the app's ⋮ menu, not just a save/refresh
+- [x] Intermittent `PipelineError` on some questions — root-caused via Sentry: OpenAlex transient failures (429/5xx/timeout) had no retry and the real per-query errors were discarded from the exception message. Fixed in `openalex_search.fetch_results()` (one retry) and `pipeline_runner.py` (error message now surfaces the real cause). See commit `19b0ff8`.
+- [ ] Streamlit Cloud sometimes serves a stale/partially-reloaded module after a push (hit three times now: `FIREBASE_KEY`, `auth.is_subscribed`, `run_assistant.make_relevance_classifier`) — fix is always a full Reboot from the app's ⋮ menu, not just a save/refresh. Consider whether this is worth a standing habit: always Reboot after every push, not just when something breaks.
 
 ## Pricing research (done, not yet applied to real prices)
 
