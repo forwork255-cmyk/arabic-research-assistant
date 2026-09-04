@@ -150,32 +150,36 @@ with st.sidebar:
         other_order = [i for i in newest_first if not st.session_state["search_history"][i].get("starred")]
 
         def _render_history_row(i: int) -> None:
+            # Two rows, not one, for each history item: the sidebar is forced
+            # to a narrow fixed width (see the CSS below), and packing the
+            # label + star + delete into a single row squeezed the icon
+            # buttons down to ~15px wide -- too narrow for the browser to
+            # render anything in them at all (blank boxes), regardless of
+            # which character/emoji was used. Icons now get their own row
+            # split only two/three ways, giving each one real room.
             entry = st.session_state["search_history"][i]
             label = entry["question"][:40] + ("…" if len(entry["question"]) > 40 else "")
             confirm_key = f"confirm_delete_{i}"
+
+            if st.button(label, key=f"history_{i}", use_container_width=True):
+                st.session_state["viewing_index"] = i
+                st.rerun()
+
             if st.session_state.get(confirm_key):
-                col_open, col_star, col_confirm, col_cancel = st.columns([5, 1, 1, 1])
+                col_star, col_confirm, col_cancel = st.columns(3)
             else:
-                col_open, col_star, col_delete = st.columns([6, 1, 1])
-            with col_open:
-                if st.button(label, key=f"history_{i}", use_container_width=True):
-                    st.session_state["viewing_index"] = i
-                    st.rerun()
+                col_star, col_delete = st.columns(2)
+
             with col_star:
-                # Full-color emoji only (not plain text symbols like "☆"/"✕") --
-                # plain symbol glyphs were rendering as blank/invisible boxes for
-                # the user, while emoji render reliably via the OS emoji font.
-                # The starred/not-starred states use Streamlit's own button
-                # "type" styling instead of an outline-star glyph.
                 if st.button(
                     "⭐", key=f"star_{i}", help="إزالة من المفضلة" if entry.get("starred") else "تمييز كمفضلة",
-                    type="primary" if entry.get("starred") else "secondary",
+                    type="primary" if entry.get("starred") else "secondary", use_container_width=True,
                 ):
                     toggle_star(i)
                     st.rerun()
             if st.session_state.get(confirm_key):
                 with col_confirm:
-                    if st.button("✅", key=f"delete_confirm_{i}", help="تأكيد الحذف نهائياً"):
+                    if st.button("✅", key=f"delete_confirm_{i}", help="تأكيد الحذف نهائياً", use_container_width=True):
                         if entry.get("id"):
                             history.delete_entry(st.session_state["user_email"], entry["id"])
                         del st.session_state["search_history"][i]
@@ -186,20 +190,20 @@ with st.sidebar:
                         st.session_state.pop(confirm_key, None)
                         st.rerun()
                 with col_cancel:
-                    if st.button("❌", key=f"delete_cancel_{i}", help="إلغاء"):
+                    if st.button("❌", key=f"delete_cancel_{i}", help="إلغاء", use_container_width=True):
                         st.session_state.pop(confirm_key, None)
                         st.rerun()
             else:
                 with col_delete:
-                    if st.button("🗑️", key=f"delete_{i}", help="حذف"):
+                    if st.button("🗑️", key=f"delete_{i}", help="حذف", use_container_width=True):
                         st.session_state[confirm_key] = True
                         st.rerun()
+            st.divider()
 
         if starred_order:
             st.caption("⭐ المفضلة")
             for i in starred_order:
                 _render_history_row(i)
-            st.divider()
         for i in other_order:
             _render_history_row(i)
     st.caption("السجل محفوظ في حسابك، ويظهر عند تسجيل الدخول لاحقاً.")
