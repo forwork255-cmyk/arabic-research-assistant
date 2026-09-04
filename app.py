@@ -585,6 +585,50 @@ def render_paper_analysis(stages: dict) -> None:
     st.caption("هذا التحليل مبني فقط على محتوى الملف المرفق.")
 
 
+def render_paper_followup_thread(idx: int) -> None:
+    entry = st.session_state["search_history"][idx]
+    for fu in entry.get("followups", []):
+        st.chat_message("user").write(fu["question"])
+        with st.chat_message("assistant"):
+            st.write(fu["answer"])
+
+
+def handle_paper_followup_input(idx: int, followup_question: str) -> None:
+    """Runs when the user asks another question about an already-analyzed
+    paper. The PDF itself is only cached in-session (st.session_state), never
+    written to Firestore -- a 15MB file would blow past Firestore's 1MB
+    document size limit. So this only works while the file is still cached
+    from the original upload in this running session."""
+    entry = st.session_state["search_history"][idx]
+    pdf_base64 = st.session_state.get("paper_pdf_cache", {}).get(entry.get("id"))
+    if not pdf_base64:
+        st.error("لم يعد الملف متاحاً في هذه الجلسة. يرجى رفعه مرة أخرى لطرح سؤال جديد عنه.")
+        return
+    if remaining_searches() <= 0:
+        st.error(no_searches_left_message())
+        return
+    appropriate, reason = is_question_appropriate(
+        followup_question, prompt_builder=moderation.format_paper_question_moderation_prompt
+    )
+    if not appropriate:
+        st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
+        return
+    record_search_used()
+    backend.TOKEN_USAGE_LOG.clear()
+    prompt = paper_analysis.format_paper_followup_prompt(entry["stages"]["analysis"], followup_question)
+    try:
+        with st.spinner("جارٍ البحث عن إجابة..."):
+            answer = backend.analyze_paper(prompt, pdf_base64)
+    except ModelClientError as error:
+        print(f"[server-only log] ModelClientError (paper followup): {error}")
+        sentry_sdk.capture_exception(error)
+        st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
+    else:
+        entry.setdefault("followups", []).append({"question": followup_question, "answer": answer})
+        _persist_entry(idx)
+        st.rerun()
+
+
 def run_paper_analysis(pdf_bytes: bytes, filename: str, question: str) -> None:
     record_search_used()
     backend.TOKEN_USAGE_LOG.clear()
@@ -618,6 +662,7 @@ def run_paper_analysis(pdf_bytes: bytes, filename: str, question: str) -> None:
         label = question if question else f"تحليل: {filename}"
         stages = {"kind": "paper_analysis", "filename": filename, "analysis": analysis_text}
         doc_id = history.save_search(st.session_state["user_email"], label, stages)
+        st.session_state.setdefault("paper_pdf_cache", {})[doc_id] = pdf_base64
         st.session_state["search_history"].append(
             {"id": doc_id, "question": label, "stages": stages, "followups": []}
         )
@@ -709,11 +754,19 @@ if st.session_state["viewing_index"] is not None:
             render_result(entry["question"], entry["stages"])
             render_expand_button(idx)
 
-    if entry["stages"].get("kind") != "paper_analysis":
+    if entry["stages"].get("kind") == "paper_analysis":
+        render_paper_followup_thread(idx)
+    else:
         render_followup_thread(idx)
 
     st.caption(searches_caption())
-    if entry["stages"].get("kind") != "paper_analysis":
+    if entry["stages"].get("kind") == "paper_analysis":
+        if entry.get("id") in st.session_state.get("paper_pdf_cache", {}):
+            if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه الورقة..."):
+                handle_paper_followup_input(idx, followup_prompt)
+        else:
+            st.caption("لطرح سؤال جديد حول هذه الورقة، يرجى رفعها مرة أخرى في محادثة جديدة.")
+    else:
         if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه النتائج..."):
             handle_followup_input(idx, followup_prompt)
 else:

@@ -30,3 +30,19 @@ def format_paper_analysis_prompt(question: str | None) -> str:
 - القيود التي ذكرها الباحثون (إن وجدت)
 
 اعتمد فقط على ما ورد فعلياً في الورقة المرفقة. لا تخترع أي تفاصيل أو نتائج غير موجودة فيها."""
+
+
+def format_paper_followup_prompt(previous_analysis: str, question: str) -> str:
+    """A follow-up question about the same attached paper. The PDF is
+    re-sent alongside this prompt (see model_client.call_model_with_document)
+    so the model can ground the new answer in the actual document again,
+    not just in its own previous summary."""
+    return f"""أنت مساعد بحث أكاديمي. سبق أن قدمت للمستخدم هذا التحليل لورقة بحثية مرفقة:
+
+{previous_analysis}
+
+الآن يطرح المستخدم سؤالاً إضافياً عن نفس الورقة:
+
+"{question}"
+
+أجب بالاعتماد فقط على محتوى الورقة المرفقة. إن لم تحتوِ الورقة على إجابة واضحة لهذا السؤال، قل ذلك صراحةً بدلاً من التخمين أو استخدام معلومات من خارج الورقة. اكتب الإجابة باللغة العربية."""
