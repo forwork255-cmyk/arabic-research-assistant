@@ -17,6 +17,7 @@ from model_client import call_model_with_usage, call_model_structured, call_mode
 from pipeline_runner import run_pipeline, PipelineError
 from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA
 from moderation import MODERATION_JSON_SCHEMA
+from relevance_filter import RELEVANCE_JSON_SCHEMA
 
 # A small, fast classification task -- not cross-paper reasoning -- so Haiku
 # with a low token ceiling (one bool + one short Arabic sentence).
@@ -109,10 +110,15 @@ def generate_queries(prompt: str) -> str:
     return text
 
 
-def classify_relevance(prompt: str) -> str:
-    text, usage = call_model_with_usage(prompt, model=RELEVANCE_MODEL, max_tokens=RELEVANCE_MAX_TOKENS)
-    TOKEN_USAGE_LOG.append({"stage": "Relevance classification", "model": RELEVANCE_MODEL, **usage})
-    return text
+def classify_relevance(prompt: str) -> dict:
+    # Uses native JSON Schema structured output (like extraction/synthesis
+    # below), so an extra field the model might otherwise add (e.g. echoing
+    # back "title") is structurally impossible instead of just validated
+    # against afterward. Returns an already-parsed dict directly.
+    return _call_structured_with_usage_logging(
+        prompt, model=RELEVANCE_MODEL, max_tokens=RELEVANCE_MAX_TOKENS,
+        schema=RELEVANCE_JSON_SCHEMA, stage_name="Relevance classification",
+    )
 
 
 def make_relevance_classifier(plan: str):
@@ -121,10 +127,11 @@ def make_relevance_classifier(plan: str):
     the model swapped in. Unknown plan names fall back to "normal"."""
     model = PLAN_MODELS.get(plan, PLAN_MODELS["normal"])["relevance"]
 
-    def _classify(prompt: str) -> str:
-        text, usage = call_model_with_usage(prompt, model=model, max_tokens=RELEVANCE_MAX_TOKENS)
-        TOKEN_USAGE_LOG.append({"stage": "Relevance classification", "model": model, **usage})
-        return text
+    def _classify(prompt: str) -> dict:
+        return _call_structured_with_usage_logging(
+            prompt, model=model, max_tokens=RELEVANCE_MAX_TOKENS,
+            schema=RELEVANCE_JSON_SCHEMA, stage_name="Relevance classification",
+        )
 
     return _classify
 

@@ -22,6 +22,37 @@ MAX_FOR_SYNTHESIS = 5
 VALID_RELEVANCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
 REQUIRED_ITEM_KEYS = {"openalex_id", "relevance", "reason"}
 
+# Native Anthropic JSON Schema for the relevance-classification call.
+# additionalProperties: False on each item makes it structurally impossible
+# for the model to add an extra field (e.g. echoing back "title") -- this
+# stage used to rely on prompt instructions alone ("return exactly these
+# three fields") with no schema enforcement, which occasionally let a real
+# response through with an extra field that validate_relevance_output()
+# then correctly rejected, failing the whole search. Wrapped in an object
+# (not a bare top-level array) because Anthropic's structured-output schema
+# requires an object root, same as PER_PAPER_EXTRACTION_JSON_SCHEMA and
+# FINAL_SYNTHESIS_JSON_SCHEMA in synthesis.py.
+RELEVANCE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "classifications": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "openalex_id": {"type": "string"},
+                    "relevance": {"type": "string", "enum": sorted(VALID_RELEVANCE_LEVELS)},
+                    "reason": {"type": "string"},
+                },
+                "required": ["openalex_id", "relevance", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["classifications"],
+    "additionalProperties": False,
+}
+
 
 def validate_relevance_output(relevance_array, papers: list) -> list:
     """

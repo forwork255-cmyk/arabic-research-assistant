@@ -92,9 +92,9 @@ def format_relevance_prompt(question: str, papers: list) -> str:
         "in your reasons.\n\n"
         f"QUESTION:\n{question}\n\n"
         f"PAPERS (JSON):\n{json.dumps(papers_for_prompt, ensure_ascii=False, indent=2)}\n\n"
-        "Return STRICT JSON only, no markdown fences, no prose: a JSON array with one object "
-        'per paper, each shaped exactly: {"openalex_id": "...", "relevance": "HIGH|MEDIUM|LOW", '
-        '"reason": "short explanation grounded only in the supplied title/abstract"}'
+        'Return one classification object per paper in "classifications", each with exactly '
+        '"openalex_id", "relevance" (HIGH|MEDIUM|LOW), and "reason" (a short explanation '
+        "grounded only in the supplied title/abstract)."
     )
 
 
@@ -340,7 +340,8 @@ def research_followup(
 
     relevance_prompt = format_relevance_prompt(follow_up_question, candidate_papers)
     relevance_raw = relevance_classifier(relevance_prompt)
-    relevance_array = parse_strict_json(relevance_raw)
+    relevance_result = relevance_raw if isinstance(relevance_raw, dict) else parse_strict_json(relevance_raw)
+    relevance_array = relevance_result.get("classifications") if isinstance(relevance_result, dict) else relevance_result
     relevance_problems = validate_relevance_output(relevance_array, candidate_papers)
     if relevance_problems:
         raise PipelineError(
@@ -440,7 +441,8 @@ def run_pipeline(question: str, query_generator, relevance_classifier, extractor
     # Stage 4: relevance classification (AI boundary)
     relevance_prompt = format_relevance_prompt(question, papers)
     relevance_raw = relevance_classifier(relevance_prompt)
-    relevance_array = parse_strict_json(relevance_raw)
+    relevance_result = relevance_raw if isinstance(relevance_raw, dict) else parse_strict_json(relevance_raw)
+    relevance_array = relevance_result.get("classifications") if isinstance(relevance_result, dict) else relevance_result
 
     # Defensive shape check BEFORE anything assumes this is a list of
     # exactly-shaped objects -- valid JSON is not the same as the expected
