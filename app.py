@@ -21,6 +21,7 @@ import streamlit as st
 import run_assistant as backend
 import auth
 import history
+import global_limit
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
@@ -94,7 +95,14 @@ with st.sidebar:
 
 
 def remaining_searches() -> int:
-    """How many searches are left on the currently logged-in account."""
+    """
+    How many searches are left on the currently logged-in account -- 0 if the
+    site-wide emergency cap (global_limit.py) has been reached, regardless of
+    this account's own remaining allowance. That cap protects the real API
+    budget from being drained by many accounts/sign-ups at once, not just one.
+    """
+    if global_limit.global_limit_reached():
+        return 0
     account = auth.get_account(st.session_state["user_email"])
     if account is None:
         return 0
@@ -103,6 +111,13 @@ def remaining_searches() -> int:
 
 def record_search_used() -> None:
     auth.increment_used(st.session_state["user_email"])
+    global_limit.increment_global_used()
+
+
+def no_searches_left_message() -> str:
+    if global_limit.global_limit_reached():
+        return "بلغ التطبيق الحد الأقصى المؤقت لعدد عمليات البحث. يرجى المحاولة لاحقاً."
+    return "لقد استنفدت عدد عمليات البحث المسموح بها لحسابك."
 
 
 # Light/Dark/"Use system setting" is handled by Streamlit's own built-in
@@ -323,7 +338,7 @@ def render_expand_and_followup(idx: int) -> None:
     st.divider()
     st.subheader("توسيع النتائج")
     if remaining_searches() <= 0:
-        st.caption("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+        st.caption(no_searches_left_message())
     elif st.button("+ أضف المزيد من الدراسات", key=f"expand_{idx}"):
         record_search_used()
         backend.TOKEN_USAGE_LOG.clear()
@@ -349,7 +364,7 @@ def render_expand_and_followup(idx: int) -> None:
         if not followup_question.strip():
             st.warning("الرجاء كتابة سؤال أولاً.")
         elif remaining_searches() <= 0:
-            st.error("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+            st.error(no_searches_left_message())
         else:
             record_search_used()
             backend.TOKEN_USAGE_LOG.clear()
@@ -380,7 +395,7 @@ def render_expand_and_followup(idx: int) -> None:
             if fu.get("sufficient") is False and not fu.get("researched"):
                 st.caption("لم تكن النتائج الحالية كافية للإجابة على هذا السؤال.")
                 if remaining_searches() <= 0:
-                    st.caption("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+                    st.caption(no_searches_left_message())
                 elif st.button("ابحث عن دراسات جديدة لهذا السؤال (تكلفة إضافية)", key=f"research_followup_{idx}_{i}"):
                     record_search_used()
                     backend.TOKEN_USAGE_LOG.clear()
@@ -431,13 +446,13 @@ else:
     )
 
     search_clicked = st.button("بحث", type="primary", use_container_width=True)
-    st.caption(f"عمليات البحث المتبقية على هذا الرمز: {remaining_searches()}")
+    st.caption(f"عمليات البحث المتبقية لحسابك: {remaining_searches()}")
 
     if search_clicked:
         if not question.strip():
             st.warning("الرجاء إدخال سؤال بحثي أولاً.")
         elif remaining_searches() <= 0:
-            st.error("لقد استنفدت عدد عمليات البحث المسموح بها لهذا الرمز.")
+            st.error(no_searches_left_message())
         else:
             record_search_used()
 
