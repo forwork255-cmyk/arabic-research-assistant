@@ -58,18 +58,19 @@ PLAN_MODELS = {
 # observed during testing -- not padded "just in case."
 QUERY_GEN_MAX_TOKENS = 300
 RELEVANCE_MAX_TOKENS = 3000
-# Per-paper extraction: exactly one ~40-word Arabic finding + a short paper
-# id, nothing else. Raised from 350 -> 500 -> 1000 after live tests kept
-# truncating (see project notes for the truncation investigation).
-EXTRACTION_MAX_TOKENS = 1000
-# Final synthesis: at most 2 disagreements + 3 limitations (1-2 sentences
-# each) + a ~200-220-word ai_synthesis, reasoning ONLY over the per-paper
-# findings (not the original abstracts). The target length was increased
-# (previously ~120 words), which pushed a live run over the old 1400 ceiling
-# and truncated -- raised to 1800, then to 2600 after truncating again on a
-# real live search (some topics produce more disagreements/limitations than
-# the estimate assumed) -- real margin this time, not just a bump to 2000.
-FINAL_SYNTHESIS_MAX_TOKENS = 2600
+# Per-paper extraction: one finding, target raised from ~80-100 words to
+# ~150-200 words (the "full version" length pass -- the original ~40/~80-100
+# word targets were sized for a terse demo MVP, not the real product).
+# Raised 350 -> 500 -> 1000 -> 2000 for real margin at the new target.
+EXTRACTION_MAX_TOKENS = 2000
+# Final synthesis: at most 3 disagreements (3-5 sentences each) + 4
+# limitations (2-4 sentences each) + a ~450-600-word multi-paragraph
+# ai_synthesis, reasoning ONLY over the per-paper findings (not the original
+# abstracts). Raised 1000 -> 1400 -> 1800 -> 2600 -> 6000: the "full version"
+# length pass roughly triples the ai_synthesis target alone on top of the
+# longer disagreements/limitations, so this needs real headroom, not another
+# small bump that just re-triggers the same truncation cycle again.
+FINAL_SYNTHESIS_MAX_TOKENS = 6000
 # Follow-up Q&A: a single ~120-150-word answer plus a short list of paper
 # ids, reasoning only over already-extracted findings (no abstracts). This
 # is a smaller job than final synthesis (one string field, not three), so a
