@@ -20,6 +20,7 @@ import streamlit as st
 
 import run_assistant as backend
 import auth
+import history
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
@@ -63,10 +64,15 @@ def show_login_and_signup() -> bool:
 if not show_login_and_signup():
     st.stop()
 
-# Session-only search history: a list of {"question": str, "stages": dict}.
-# This is NOT saved anywhere -- it lives only in this browser tab's session
-# and disappears when the tab is closed or the session expires. No database.
-st.session_state.setdefault("search_history", [])
+# Search history: a list of {"question": str, "stages": dict}, loaded once
+# per browser session from Firestore (history.py) so it follows the logged-in
+# account across devices/sessions. New searches are appended here AND saved
+# to the database (see the completion handler below); interactive follow-ups
+# on an existing entry (expand/Q&A) only update this in-memory copy, not the
+# database -- reopening that entry after a fresh login shows the original
+# result, not those follow-ups.
+if "search_history" not in st.session_state:
+    st.session_state["search_history"] = list(reversed(history.get_history(st.session_state["user_email"])))
 st.session_state.setdefault("viewing_index", None)
 
 with st.sidebar:
@@ -84,7 +90,7 @@ with st.sidebar:
             if st.button(label, key=f"history_{i}", use_container_width=True):
                 st.session_state["viewing_index"] = i
                 st.rerun()
-    st.caption("السجل مؤقت لهذه الجلسة فقط، ويُحذف عند إغلاق المتصفح.")
+    st.caption("السجل محفوظ في حسابك، ويظهر عند تسجيل الدخول لاحقاً.")
 
 
 def remaining_searches() -> int:
@@ -486,4 +492,5 @@ else:
             elif stages is not None:
                 st.session_state["search_history"].append({"question": question, "stages": stages})
                 st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
+                history.save_search(st.session_state["user_email"], question, stages)
                 st.rerun()
