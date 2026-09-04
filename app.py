@@ -17,6 +17,7 @@ Run with: streamlit run app.py
 """
 
 import streamlit as st
+import sentry_sdk
 
 import run_assistant as backend
 import auth
@@ -27,6 +28,16 @@ from pipeline_runner import run_pipeline, expand_selection, answer_followup, res
 from model_client import ModelClientError
 
 st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
+
+# Error monitoring: reports unhandled exceptions to Sentry automatically, so
+# a production failure is a real-time alert instead of something we only
+# learn about if a user happens to mention it. Never sends research
+# questions or any user-entered text -- just crash/error technical details.
+# No DSN configured (e.g. running with no secrets set up at all) -> simply
+# does nothing, rather than breaking the app.
+_sentry_dsn = st.secrets.get("SENTRY_DSN", "")
+if _sentry_dsn:
+    sentry_sdk.init(dsn=_sentry_dsn, send_default_pii=False)
 
 
 def show_login_and_signup() -> bool:
@@ -134,9 +145,11 @@ def is_question_appropriate(question: str) -> tuple:
         result = backend.check_question_moderation(moderation.format_moderation_prompt(question))
     except ModelClientError as error:
         print(f"[server-only log] Moderation check failed, allowing through: {error}")
+        sentry_sdk.capture_exception(error)
         return True, None
     if not moderation.validate_moderation_output(result):
         print(f"[server-only log] Moderation returned malformed output, allowing through: {result}")
+        sentry_sdk.capture_message(f"Moderation returned malformed output: {result}")
         return True, None
     if result["appropriate"]:
         return True, None
@@ -379,9 +392,11 @@ def render_expand_button(idx: int) -> None:
                 )
         except PipelineError as error:
             print(f"[server-only log] PipelineError (expand): {error}")
+            sentry_sdk.capture_exception(error)
             st.error("تعذّر إضافة المزيد من الدراسات. قد لا توجد دراسات إضافية متاحة.")
         except ModelClientError as error:
             print(f"[server-only log] ModelClientError (expand): {error}")
+            sentry_sdk.capture_exception(error)
             st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
         else:
             st.session_state["search_history"][idx]["stages"] = new_stages
@@ -417,9 +432,11 @@ def render_followup_thread(idx: int) -> None:
                             )
                     except PipelineError as error:
                         print(f"[server-only log] PipelineError (research_followup): {error}")
+                        sentry_sdk.capture_exception(error)
                         st.error("تعذّر العثور على دراسات جديدة مناسبة لهذا السؤال.")
                     except ModelClientError as error:
                         print(f"[server-only log] ModelClientError (research_followup): {error}")
+                        sentry_sdk.capture_exception(error)
                         st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
                     else:
                         new_result["researched"] = True
@@ -450,9 +467,11 @@ def handle_followup_input(idx: int, followup_question: str) -> None:
             )
     except PipelineError as error:
         print(f"[server-only log] PipelineError (followup): {error}")
+        sentry_sdk.capture_exception(error)
         st.error("تعذّر الإجابة على هذا السؤال بالاعتماد على النتائج الحالية.")
     except ModelClientError as error:
         print(f"[server-only log] ModelClientError (followup): {error}")
+        sentry_sdk.capture_exception(error)
         st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
     else:
         entry.setdefault("followups", []).append({"question": followup_question, **result})
@@ -501,16 +520,20 @@ def run_new_search(question: str) -> None:
             )
         except ModelClientError as error:
             print(f"[server-only log] ModelClientError: {error}")  # console only, never shown in the browser
+            sentry_sdk.capture_exception(error)
             status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
             user_message = "تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً."
             technical_name = type(error).__name__
         except PipelineError as error:
             print(f"[server-only log] PipelineError: {error}")  # console only, never shown in the browser
+            sentry_sdk.capture_exception(error)
             status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
             user_message = "تعذّر إكمال معالجة النتائج. يرجى المحاولة مرة أخرى أو تعديل السؤال."
             technical_name = type(error).__name__
         except Exception as error:
             # Safety net: never show a raw traceback or internal details to the user.
+            print(f"[server-only log] Unexpected error: {error}")
+            sentry_sdk.capture_exception(error)
             status.update(label="حدث خطأ غير متوقع", state="error", expanded=False)
             user_message = "حدث خطأ غير متوقع. لم يتم عرض أي نتيجة غير مكتملة."
             technical_name = type(error).__name__
