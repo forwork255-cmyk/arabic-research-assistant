@@ -19,44 +19,48 @@ Run with: streamlit run app.py
 import streamlit as st
 
 import run_assistant as backend
-import db
+import auth
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
 st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
 
 
-def check_access_code() -> bool:
-    """
-    Multiple shared access codes (instead of one password), each with its own
-    search limit -- so different people/customers can be given different
-    codes, and no single code can spend unlimited API money. The real codes
-    are never written in this file -- they live in Streamlit's own "secrets"
-    storage (ACCESS_CODES table below), same rule as the API key.
-
-    secrets.toml shape:
-        [ACCESS_CODES]
-        SOME_CODE = 20
-        ANOTHER_CODE = 5
-    (each value is that code's total allowed searches)
-    """
+def show_login_and_signup() -> bool:
+    """Email/password sign-up and login, backed by Firestore (see auth.py)."""
     if st.session_state.get("authenticated"):
         return True
 
     st.title("📚 مساعد البحث العلمي العربي")
-    code = st.text_input("رمز الدخول", type="password")
-    if st.button("دخول"):
-        access_codes = st.secrets.get("ACCESS_CODES", {})
-        if code in access_codes:
-            st.session_state["authenticated"] = True
-            st.session_state["access_code"] = code
-            st.rerun()
-        else:
-            st.error("رمز الدخول غير صحيح.")
+    login_tab, signup_tab = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+
+    with login_tab:
+        email = st.text_input("البريد الإلكتروني", key="login_email")
+        password = st.text_input("كلمة المرور", type="password", key="login_password")
+        if st.button("دخول"):
+            if auth.verify_login(email, password):
+                st.session_state["authenticated"] = True
+                st.session_state["user_email"] = email.strip().lower()
+                st.rerun()
+            else:
+                st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
+
+    with signup_tab:
+        new_email = st.text_input("البريد الإلكتروني", key="signup_email")
+        new_password = st.text_input("كلمة المرور (8 أحرف على الأقل)", type="password", key="signup_password")
+        if st.button("إنشاء حساب"):
+            try:
+                auth.create_account(new_email, new_password)
+                st.session_state["authenticated"] = True
+                st.session_state["user_email"] = new_email.strip().lower()
+                st.rerun()
+            except auth.AuthError as e:
+                st.error(str(e))
+
     return False
 
 
-if not check_access_code():
+if not show_login_and_signup():
     st.stop()
 
 # Session-only search history: a list of {"question": str, "stages": dict}.
@@ -84,16 +88,15 @@ with st.sidebar:
 
 
 def remaining_searches() -> int:
-    """How many searches are left on the currently logged-in code."""
-    code = st.session_state["access_code"]
-    limit = st.secrets.get("ACCESS_CODES", {}).get(code, 0)
-    used = db.get_used(code)
-    return max(0, limit - used)
+    """How many searches are left on the currently logged-in account."""
+    account = auth.get_account(st.session_state["user_email"])
+    if account is None:
+        return 0
+    return max(0, account["search_limit"] - account["used"])
 
 
 def record_search_used() -> None:
-    code = st.session_state["access_code"]
-    db.increment_used(code)
+    auth.increment_used(st.session_state["user_email"])
 
 
 # Light/Dark/"Use system setting" is handled by Streamlit's own built-in
