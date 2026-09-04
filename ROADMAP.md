@@ -20,11 +20,11 @@ The original plan had **14 items across 4 phases**. Only **9 are recorded below*
 - [x] Site-wide safety cap — emergency stop on total real searches (protects the API budget)
 - [x] Content moderation — blocks harmful/off-topic/jailbreak questions before they reach the real pipeline
 
-## Phase 3/4 — Identified, not started
+## Phase 3/4 — Identified
 
-- [ ] Payments (Stripe) — Model: Sonnet | Effort: High (real money + security stakes)
-- [ ] Error monitoring (Sentry) — Model: Sonnet | Effort: Low-Medium
-- [ ] Legal docs (Terms of Service / Privacy Policy) — not a coding task; needs real human/legal review, not just AI-drafted text
+- [x] Error monitoring (Sentry) — captures unhandled + previously-silently-caught exceptions, verified live
+- [x] Legal docs draft — [PRIVACY_POLICY.md](PRIVACY_POLICY.md) / [TERMS_OF_SERVICE.md](TERMS_OF_SERVICE.md) written; both explicitly marked DRAFT, several `[يُحدَّد]` placeholders (jurisdiction, contact email, company name) need a real lawyer before publishing
+- [ ] Payments (Stripe) — Model: Sonnet | Effort: High (real money + security stakes). Needs the user to create the Stripe account and make pricing decisions before implementation starts.
 
 ## Known open issues (not on the original roadmap, found during testing)
 
