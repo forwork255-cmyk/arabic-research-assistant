@@ -16,6 +16,7 @@ or validation logic lives here.
 Run with: streamlit run app.py
 """
 
+import base64
 import os
 
 import streamlit as st
@@ -26,6 +27,7 @@ import auth
 import history
 import global_limit
 import moderation
+import paper_analysis
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
@@ -567,6 +569,52 @@ STAGE_LABELS = {
     7: "التحقق من النتائج",
 }
 
+def render_paper_analysis(stages: dict) -> None:
+    st.caption(f"📄 {stages['filename']}")
+    st.write(stages["analysis"])
+    st.caption("هذا التحليل مبني فقط على محتوى الملف المرفق.")
+
+
+def run_paper_analysis(pdf_bytes: bytes, filename: str, question: str) -> None:
+    record_search_used()
+    backend.TOKEN_USAGE_LOG.clear()
+
+    pdf_base64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
+    prompt = paper_analysis.format_paper_analysis_prompt(question or None)
+
+    analysis_text = None
+    user_message = None
+    technical_name = None
+
+    with st.spinner("جارٍ تحليل الورقة البحثية..."):
+        try:
+            analysis_text = backend.analyze_paper(prompt, pdf_base64)
+        except ModelClientError as error:
+            print(f"[server-only log] ModelClientError (paper analysis): {error}")
+            sentry_sdk.capture_exception(error)
+            user_message = "تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً."
+            technical_name = type(error).__name__
+        except Exception as error:
+            print(f"[server-only log] Unexpected error (paper analysis): {error}")
+            sentry_sdk.capture_exception(error)
+            user_message = "حدث خطأ غير متوقع أثناء تحليل الورقة."
+            technical_name = type(error).__name__
+
+    if user_message:
+        st.error(user_message)
+        with st.expander("تفاصيل تقنية"):
+            st.caption(technical_name)
+    else:
+        label = question if question else f"تحليل: {filename}"
+        stages = {"kind": "paper_analysis", "filename": filename, "analysis": analysis_text}
+        doc_id = history.save_search(st.session_state["user_email"], label, stages)
+        st.session_state["search_history"].append(
+            {"id": doc_id, "question": label, "stages": stages, "followups": []}
+        )
+        st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
+        st.rerun()
+
+
 def run_new_search(question: str) -> None:
     record_search_used()
 
@@ -639,26 +687,55 @@ if st.session_state["viewing_index"] is not None:
 
     st.chat_message("user").write(entry["question"])
     with st.chat_message("assistant"):
-        render_result(entry["question"], entry["stages"])
-        render_expand_button(idx)
+        if entry["stages"].get("kind") == "paper_analysis":
+            render_paper_analysis(entry["stages"])
+        else:
+            render_result(entry["question"], entry["stages"])
+            render_expand_button(idx)
 
-    render_followup_thread(idx)
+    if entry["stages"].get("kind") != "paper_analysis":
+        render_followup_thread(idx)
 
     st.caption(searches_caption())
-    if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه النتائج..."):
-        handle_followup_input(idx, followup_prompt)
+    if entry["stages"].get("kind") != "paper_analysis":
+        if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه النتائج..."):
+            handle_followup_input(idx, followup_prompt)
 else:
     st.caption(searches_caption())
-    if new_question := st.chat_input(
-        "اكتب سؤالك البحثي، مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟"
+    st.caption("يمكنك أيضاً إرفاق ورقة بحثية (PDF) لتحليلها مباشرة، مع سؤال أو بدونه.")
+    if submitted := st.chat_input(
+        "اكتب سؤالك البحثي، مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟",
+        accept_file=True, file_type=["pdf"],
     ):
+        question_text = submitted.text.strip()
+        uploaded_files = submitted.files
+
         if remaining_searches() <= 0:
             st.error(no_searches_left_message())
-        else:
-            st.chat_message("user").write(new_question)
-            with st.chat_message("assistant"):
-                appropriate, reason = is_question_appropriate(new_question)
+        elif uploaded_files:
+            pdf_file = uploaded_files[0]
+            pdf_bytes = pdf_file.getvalue()
+            if len(pdf_bytes) > paper_analysis.MAX_PDF_BYTES:
+                st.error(
+                    f"حجم الملف كبير جداً (الحد الأقصى {paper_analysis.MAX_PDF_BYTES // (1024 * 1024)} ميغابايت)."
+                )
+            else:
+                appropriate, reason = (True, None)
+                if question_text:
+                    appropriate, reason = is_question_appropriate(question_text)
                 if not appropriate:
                     st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
                 else:
-                    run_new_search(new_question)
+                    st.chat_message("user").write(question_text or f"📄 {pdf_file.name}")
+                    with st.chat_message("assistant"):
+                        run_paper_analysis(pdf_bytes, pdf_file.name, question_text)
+        elif question_text:
+            st.chat_message("user").write(question_text)
+            with st.chat_message("assistant"):
+                appropriate, reason = is_question_appropriate(question_text)
+                if not appropriate:
+                    st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
+                else:
+                    run_new_search(question_text)
+        else:
+            st.warning("الرجاء إدخال سؤال أو إرفاق ورقة بحثية.")

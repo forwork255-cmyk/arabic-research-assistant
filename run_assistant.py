@@ -13,7 +13,7 @@ calls (via model_client.py) and prints a readable final report.
 
 import sys
 
-from model_client import call_model_with_usage, call_model_structured, ModelClientError, TruncatedResponseError
+from model_client import call_model_with_usage, call_model_structured, call_model_with_document, ModelClientError, TruncatedResponseError
 from pipeline_runner import run_pipeline, PipelineError
 from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA
 from moderation import MODERATION_JSON_SCHEMA
@@ -22,6 +22,13 @@ from moderation import MODERATION_JSON_SCHEMA
 # with a low token ceiling (one bool + one short Arabic sentence).
 MODERATION_MODEL = "claude-haiku-4-5"
 MODERATION_MAX_TOKENS = 200
+
+# A full paper's text is far more input tokens than an abstract, and the
+# answer is a structured multi-section summary or a grounded answer to a
+# specific question -- comparable in scope to final synthesis, so Sonnet
+# and a similar output ceiling.
+PAPER_ANALYSIS_MODEL = "claude-sonnet-5"
+PAPER_ANALYSIS_MAX_TOKENS = 2000
 
 QUERY_GEN_MODEL = "claude-haiku-4-5"
 RELEVANCE_MODEL = "claude-sonnet-5"
@@ -71,6 +78,14 @@ def check_question_moderation(prompt: str) -> dict:
         schema=MODERATION_JSON_SCHEMA,
     )
     return parsed
+
+
+def analyze_paper(prompt: str, pdf_base64: str) -> str:
+    text, usage = call_model_with_document(
+        prompt, pdf_base64, model=PAPER_ANALYSIS_MODEL, max_tokens=PAPER_ANALYSIS_MAX_TOKENS,
+    )
+    TOKEN_USAGE_LOG.append({"stage": "Paper analysis", "model": PAPER_ANALYSIS_MODEL, **usage})
+    return text
 
 
 def generate_queries(prompt: str) -> str:

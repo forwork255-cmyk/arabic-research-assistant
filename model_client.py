@@ -35,9 +35,12 @@ class TruncatedResponseError(ModelClientError):
         self.stop_reason = stop_reason
 
 
-def _send_request(prompt: str, model: str, max_tokens: int, output_config=None):
+def _send_request(content, model: str, max_tokens: int, output_config=None):
     """
     Shared request/error-handling core used by every call_model* function.
+    `content` is whatever the Messages API accepts as one user turn's
+    content -- a plain string (the common case) or a list of content blocks
+    (e.g. a PDF document block plus a text block, for call_model_with_document).
     Returns the raw SDK response object. Raises ModelClientError (never the
     raw SDK exception) for a missing API key, authentication failure,
     network/API errors -- never exposing the key or request headers.
@@ -54,7 +57,7 @@ def _send_request(prompt: str, model: str, max_tokens: int, output_config=None):
     kwargs = {
         "model": model,
         "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
     }
     if output_config is not None:
         kwargs["output_config"] = output_config
@@ -114,6 +117,37 @@ def call_model_with_usage(prompt: str, model: str, max_tokens: int) -> tuple:
     only the two token counts from the response's usage field.
     """
     response = _send_request(prompt, model, max_tokens)
+
+    text = _extract_text(response)
+    if not text:
+        raise ModelClientError(
+            "The model returned an empty response. Try again, or check the "
+            "prompt and model name."
+        )
+
+    return text, _extract_usage(response)
+
+
+def call_model_with_document(prompt: str, pdf_base64: str, model: str, max_tokens: int) -> tuple:
+    """
+    Same behavior/return shape as call_model_with_usage(), but attaches one
+    PDF document to the request as a native Claude document content block
+    (base64, no beta header needed) -- the model reads the actual PDF
+    content directly, not a text extraction we did ourselves. The document
+    block is placed before the text block, per Anthropic's documented order.
+
+    pdf_base64 must have no newlines (standard base64 encoding, not a
+    line-wrapped variant). Anthropic's own limits: 32 MB per request, 600
+    pages (100 pages on 200K-context models).
+    """
+    content = [
+        {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_base64},
+        },
+        {"type": "text", "text": prompt},
+    ]
+    response = _send_request(content, model, max_tokens)
 
     text = _extract_text(response)
     if not text:

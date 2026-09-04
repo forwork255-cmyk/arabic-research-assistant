@@ -7,7 +7,7 @@ I am using Claude Code to help me build this project. I want to understand the i
 
 ## Project goal
 
-Build a small, affordable Arabic-first academic research assistant.
+Build an Arabic-first academic research assistant. Originally scoped as a small, affordable MVP; the goal has since expanded to a full-featured AI assistant (not just the light MVP) -- see `ROADMAP.md` for the phase-by-phase plan and current progress. That file is the source of truth for "what phase are we on" -- this file should not duplicate that tracking, only the durable project rules/architecture.
 
 A user should eventually be able to:
 
@@ -41,15 +41,23 @@ A user should eventually be able to:
 
 ## Current status
 
-The project has moved from experimentation into MVP implementation. The current architecture:
+Deployed and live (Streamlit Community Cloud), with real user accounts, persistent per-account history, and a conversational chat UI -- not just an MVP script anymore. Current architecture:
 
 - `openalex_search.py` — OpenAlex API access and paper metadata/abstract reconstruction.
 - `search_pipeline.py` — multi-query retrieval, merging, deduplication, and deterministic retrieval statistics.
 - `.claude/skills/research-search-workflow/SKILL.md` — generates bounded English and Arabic search queries from an Arabic academic question.
 - `relevance_filter.py` — deterministic selection/reporting around model-provided relevance classifications.
 - `synthesis.py` — builds the restricted synthesis input packet and validates the model's structured synthesis output.
+- `pipeline_runner.py` — orchestrates the full pipeline (query gen → retrieval → relevance → selection → extraction → synthesis) plus expand/follow-up/research-follow-up flows.
+- `run_assistant.py` — the only file supplying real model calls (via `model_client.py`), one function per pipeline stage, each logging token usage.
+- `moderation.py` — safety check on user questions before they reach the real pipeline.
+- `db.py` — shared Firestore connection.
+- `auth.py` — accounts (bcrypt password hashing) and manually-granted subscriptions (pay-the-owner-directly model).
+- `history.py` — persistent per-account search history.
+- `global_limit.py` — site-wide emergency cap on total real searches, protecting the API budget regardless of account count.
+- `app.py` — the Streamlit UI, chat-based (`st.chat_message`/`st.chat_input`), no pipeline/prompt/model logic of its own.
 
-The three model-dependent tasks are query generation, relevance classification, and evidence synthesis. Deterministic Python handles API retrieval, deduplication, selection rules, input assembly, and output validation.
+The model-dependent tasks are: moderation, query generation, relevance classification, evidence extraction, evidence synthesis, and follow-up Q&A. Deterministic Python handles API retrieval, deduplication, selection rules, input assembly, and output validation for all of them.
 
 ## Established product principles
 
@@ -57,5 +65,5 @@ The three model-dependent tasks are query generation, relevance classification, 
 - Evidence and AI interpretation must be clearly separated.
 - Failure to retrieve evidence must never be presented as proof that literature does not exist.
 - Weak evidence should be reported honestly rather than forced into a confident answer.
-- The MVP should remain extremely small and low-cost.
-- No authentication, payments, database, PDF processing, or mobile app yet.
+- Keep real per-search API cost as low as reasonably possible; always estimate cost before a live test.
+- Authentication, database, and manual (non-gateway) payments now exist -- see `ROADMAP.md` for what's built vs. planned. Still no automated payment gateway and no mobile app.
