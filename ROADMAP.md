@@ -4,6 +4,13 @@ Tracks the plan to grow this from a light MVP into a full-featured AI assistant,
 
 **Why this file exists:** conversation history gets compacted/summarized over long sessions, which can lose fine-grained details (this file itself exists because the original full 14-item list got lost that way once already). This file does NOT get affected by compaction — it's read fresh each time. Check it at the start of any new roadmap step.
 
+## Pick up here (updated 2026-09-04, before a planned compact)
+
+Immediate next steps, in order:
+1. **Verify the full-length output change live** — one real search, confirm the longer findings/synthesis (150-200 words/finding, 450-600 word multi-paragraph ai_synthesis) come through without truncating at the new `FINAL_SYNTHESIS_MAX_TOKENS = 6000` / `EXTRACTION_MAX_TOKENS = 2000` ceilings. Not done yet -- got sidetracked by the plan-tier UI question below.
+2. **Finish the Normal vs Max real comparison test** (interrupted earlier by the PipelineError bug, which is now fixed) -- same question through a free-tier/normal account and a Max-subscribed account, compare output quality, before claiming Opus is actually worth the extra cost.
+3. Open thread, not yet resolved: user opened the live app and "saw no tier plans in the writing box" -- explained that tiers aren't a user-facing selector (deliberately, per earlier discussion) but a caption shown above the chat input for subscribed non-owner accounts only (owner always shows unlimited access, never a plan name). Waiting on user to confirm whether that matches what they expected, or whether they actually want some other visible plan indicator.
+
 ## Note on completeness
 
 The original plan had **14 items across 4 phases**. Only **9 are recorded below** (6 done, 3 identified but not started) — the other 5 were lost when conversation history was compacted before this file existed, and are not reconstructed here to avoid inventing items that weren't actually part of the original plan. Before starting Phase 3/4 work, it's worth a short session to re-derive what else belongs on this list.
