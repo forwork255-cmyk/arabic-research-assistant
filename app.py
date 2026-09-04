@@ -129,19 +129,43 @@ with st.sidebar:
                 st.rerun()
     st.caption("السجل محفوظ في حسابك، ويظهر عند تسجيل الدخول لاحقاً.")
 
+    # Owner-only panel: manually grant subscription access to an account
+    # after the owner has received payment outside the app (bank transfer,
+    # cash, etc.) -- the same model as reselling a shared subscription seat.
+    # No payment gateway involved; OWNER_EMAIL is a Streamlit secret so this
+    # panel is invisible/inert for every other account.
+    owner_email = st.secrets.get("OWNER_EMAIL", "")
+    if owner_email and st.session_state["user_email"] == owner_email.strip().lower():
+        st.divider()
+        with st.expander("لوحة المالك: منح اشتراك"):
+            grant_email = st.text_input("البريد الإلكتروني للمستخدم", key="grant_email")
+            grant_days = st.number_input("عدد الأيام", min_value=1, value=30, step=1, key="grant_days")
+            if st.button("منح الاشتراك", key="grant_button"):
+                try:
+                    auth.grant_subscription(grant_email, int(grant_days))
+                    st.success(f"تم منح الاشتراك لـ {grant_email.strip().lower()}.")
+                except auth.AuthError as e:
+                    st.error(str(e))
+
+
+_SUBSCRIBED_SENTINEL = 999_999  # effectively unlimited for a manually-subscribed account
+
 
 def remaining_searches() -> int:
     """
     How many searches are left on the currently logged-in account -- 0 if the
     site-wide emergency cap (global_limit.py) has been reached, regardless of
     this account's own remaining allowance. That cap protects the real API
-    budget from being drained by many accounts/sign-ups at once, not just one.
+    budget from being drained by many accounts/sign-ups at once, not just one,
+    and applies even to subscribed accounts.
     """
     if global_limit.global_limit_reached():
         return 0
     account = auth.get_account(st.session_state["user_email"])
     if account is None:
         return 0
+    if auth.is_subscribed(account):
+        return _SUBSCRIBED_SENTINEL
     return max(0, account["search_limit"] - account["used"])
 
 
@@ -154,6 +178,16 @@ def no_searches_left_message() -> str:
     if global_limit.global_limit_reached():
         return "بلغ التطبيق الحد الأقصى المؤقت لعدد عمليات البحث. يرجى المحاولة لاحقاً."
     return "لقد استنفدت عدد عمليات البحث المسموح بها لحسابك."
+
+
+def searches_caption() -> str:
+    """What to show near the chat input: subscription status if subscribed,
+    otherwise the remaining-searches count."""
+    account = auth.get_account(st.session_state["user_email"])
+    if account and auth.is_subscribed(account):
+        until = account["subscribed_until"].strftime("%Y-%m-%d")
+        return f"اشتراكك فعّال حتى {until}."
+    return f"عمليات البحث المتبقية لحسابك: {remaining_searches()}"
 
 
 def is_question_appropriate(question: str) -> tuple:
@@ -590,11 +624,11 @@ if st.session_state["viewing_index"] is not None:
 
     render_followup_thread(idx)
 
-    st.caption(f"عمليات البحث المتبقية لحسابك: {remaining_searches()}")
+    st.caption(searches_caption())
     if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه النتائج..."):
         handle_followup_input(idx, followup_prompt)
 else:
-    st.caption(f"عمليات البحث المتبقية لحسابك: {remaining_searches()}")
+    st.caption(searches_caption())
     if new_question := st.chat_input(
         "اكتب سؤالك البحثي، مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟"
     ):
