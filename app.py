@@ -212,7 +212,7 @@ def searches_caption() -> str:
     return f"عمليات البحث المتبقية لحسابك: {remaining_searches()}"
 
 
-def is_question_appropriate(question: str) -> tuple:
+def is_question_appropriate(question: str, prompt_builder=moderation.format_moderation_prompt) -> tuple:
     """
     Safety check run BEFORE the real pipeline/follow-up call and before it
     counts against the search limit (see moderation.py). Fails OPEN (allows
@@ -220,9 +220,14 @@ def is_question_appropriate(question: str) -> tuple:
     malformed result -- a legitimate user should not be blocked by an
     infrastructure hiccup; the per-account and site-wide search caps remain
     the primary defense against cost abuse.
+
+    prompt_builder defaults to judging a freestanding research question;
+    pass moderation.format_paper_question_moderation_prompt for text
+    accompanying an uploaded paper, which must not be held to that same bar
+    (a short caption like "summarize" is normal there, not suspicious).
     """
     try:
-        result = backend.check_question_moderation(moderation.format_moderation_prompt(question))
+        result = backend.check_question_moderation(prompt_builder(question))
     except ModelClientError as error:
         print(f"[server-only log] Moderation check failed, allowing through: {error}")
         sentry_sdk.capture_exception(error)
@@ -722,7 +727,9 @@ else:
             else:
                 appropriate, reason = (True, None)
                 if question_text:
-                    appropriate, reason = is_question_appropriate(question_text)
+                    appropriate, reason = is_question_appropriate(
+                        question_text, prompt_builder=moderation.format_paper_question_moderation_prompt
+                    )
                 if not appropriate:
                     st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
                 else:
