@@ -60,13 +60,17 @@ def get_history(email: str) -> list[dict]:
         .limit(MAX_HISTORY_ENTRIES)
         .stream()
     )
-    return [
-        {
+    # DocumentSnapshot.get() raises KeyError for a field missing on that
+    # specific document (unlike dict.get()) -- to_dict() avoids that for
+    # entries saved before a field like "starred" existed.
+    result = []
+    for doc in docs:
+        data = doc.to_dict() or {}
+        result.append({
             "id": doc.id,
-            "question": doc.get("question"),
-            "stages": doc.get("stages"),
-            "followups": doc.get("followups") or [],
-            "starred": doc.get("starred") or False,
-        }
-        for doc in docs
-    ]
+            "question": data.get("question"),
+            "stages": data.get("stages"),
+            "followups": data.get("followups") or [],
+            "starred": data.get("starred") or False,
+        })
+    return result
