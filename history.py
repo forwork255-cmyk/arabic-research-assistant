@@ -3,11 +3,12 @@ Persistent per-account search history, stored in Firestore.
 
 Each account's past searches live in a subcollection:
     accounts/{email}/history/{auto_id}
-holding {"question": str, "stages": dict, "created_at": server timestamp}.
+holding {"question": str, "stages": dict, "followups": list, "created_at": server timestamp}.
 
-"stages" is the same plain dict app.py already renders (queries, retrieved
-papers, synthesis, sources -- see pipeline_runner.run_pipeline) written
-as-is; nothing here talks to the model or OpenAlex.
+"stages" and "followups" are the same plain data app.py already renders
+(queries, retrieved papers, synthesis, sources, follow-up Q&A answers -- see
+pipeline_runner.py) written as-is; nothing here talks to the model or
+OpenAlex.
 """
 
 from firebase_admin import firestore
@@ -22,16 +23,28 @@ def _history_collection(email: str):
     return _get_client().collection("accounts").document(email).collection("history")
 
 
-def save_search(email: str, question: str, stages: dict) -> None:
-    _history_collection(email).add({
+def save_search(email: str, question: str, stages: dict) -> str:
+    """Create a new history entry and return its database id (needed later
+    to update it in place as expand/follow-up turns are added)."""
+    _, doc_ref = _history_collection(email).add({
         "question": question,
         "stages": stages,
+        "followups": [],
         "created_at": firestore.SERVER_TIMESTAMP,
     })
+    return doc_ref.id
+
+
+def update_entry(email: str, doc_id: str, stages: dict, followups: list) -> None:
+    """Overwrite an existing entry's stages/followups (e.g. after an expand
+    or a follow-up answer) without touching its original created_at/question."""
+    _history_collection(email).document(doc_id).set(
+        {"stages": stages, "followups": followups}, merge=True
+    )
 
 
 def get_history(email: str) -> list[dict]:
-    """Most recent searches first, each as {"id": ..., "question": ..., "stages": ...}."""
+    """Most recent searches first, each as {"id", "question", "stages", "followups"}."""
     docs = (
         _history_collection(email)
         .order_by("created_at", direction=firestore.Query.DESCENDING)
@@ -39,6 +52,11 @@ def get_history(email: str) -> list[dict]:
         .stream()
     )
     return [
-        {"id": doc.id, "question": doc.get("question"), "stages": doc.get("stages")}
+        {
+            "id": doc.id,
+            "question": doc.get("question"),
+            "stages": doc.get("stages"),
+            "followups": doc.get("followups") or [],
+        }
         for doc in docs
     ]

@@ -324,19 +324,25 @@ def render_result(question: str, stages: dict) -> None:
             st.write(f"**المجموع:** {total_in} input / {total_out} output tokens")
 
 
-def render_expand_and_followup(idx: int) -> None:
-    """
-    Controls shown below a completed result (live or from history): add more
-    papers to the same search, and ask a follow-up question answered ONLY
-    from the findings already extracted. Both cost real API money (same
-    remaining-searches accounting as a full search) but are much cheaper
-    than a full search, since retrieval and relevance classification are
-    never re-run.
-    """
+def _persist_entry(idx: int) -> None:
+    """Save this entry's current stages/followups back to Firestore -- called
+    after every expand/follow-up/research-escalation so re-opening this
+    conversation later (even after logging out) shows the full thread, not
+    just the original result."""
     entry = st.session_state["search_history"][idx]
+    if entry.get("id"):
+        history.update_entry(
+            st.session_state["user_email"], entry["id"],
+            entry["stages"], entry.get("followups", []),
+        )
 
-    st.divider()
-    st.subheader("توسيع النتائج")
+
+def render_expand_button(idx: int) -> None:
+    """'+ أضف المزيد من الدراسات': re-runs synthesis over additional
+    already-retrieved papers. Costs real API money (same remaining-searches
+    accounting as a full search) but is much cheaper, since retrieval and
+    relevance classification are never re-run."""
+    entry = st.session_state["search_history"][idx]
     if remaining_searches() <= 0:
         st.caption(no_searches_left_message())
     elif st.button("+ أضف المزيد من الدراسات", key=f"expand_{idx}"):
@@ -356,37 +362,17 @@ def render_expand_and_followup(idx: int) -> None:
             st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
         else:
             st.session_state["search_history"][idx]["stages"] = new_stages
+            _persist_entry(idx)
             st.rerun()
 
-    st.subheader("سؤال إضافي حول هذه النتائج")
-    followup_question = st.text_input("اكتب سؤالاً إضافياً", key=f"followup_input_{idx}")
-    if st.button("اسأل", key=f"followup_btn_{idx}"):
-        if not followup_question.strip():
-            st.warning("الرجاء كتابة سؤال أولاً.")
-        elif remaining_searches() <= 0:
-            st.error(no_searches_left_message())
-        else:
-            record_search_used()
-            backend.TOKEN_USAGE_LOG.clear()
-            try:
-                with st.spinner("جارٍ البحث عن إجابة..."):
-                    result = answer_followup(
-                        entry["question"], entry["stages"], followup_question,
-                        backend.answer_followup_question,
-                    )
-            except PipelineError as error:
-                print(f"[server-only log] PipelineError (followup): {error}")
-                st.error("تعذّر الإجابة على هذا السؤال بالاعتماد على النتائج الحالية.")
-            except ModelClientError as error:
-                print(f"[server-only log] ModelClientError (followup): {error}")
-                st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
-            else:
-                entry.setdefault("followups", []).append({"question": followup_question, **result})
-                st.rerun()
 
-    if entry.get("followups"):
-        for i, fu in enumerate(entry["followups"]):
-            st.markdown(f"**س: {fu['question']}**")
+def render_followup_thread(idx: int) -> None:
+    """Renders past follow-up Q&A as chat bubbles, and offers the opt-in
+    real-research escalation when the cheap answer says it wasn't enough."""
+    entry = st.session_state["search_history"][idx]
+    for i, fu in enumerate(entry.get("followups", [])):
+        st.chat_message("user").write(fu["question"])
+        with st.chat_message("assistant"):
             st.write(fu["answer"])
             all_sources = entry["stages"]["synthesis"]["sources"] + fu.get("new_sources", [])
             if fu["supporting_paper_ids"]:
@@ -415,8 +401,36 @@ def render_expand_and_followup(idx: int) -> None:
                     else:
                         new_result["researched"] = True
                         entry["followups"][i] = {"question": fu["question"], **new_result}
+                        _persist_entry(idx)
                         st.rerun()
-            st.write("")
+
+
+def handle_followup_input(idx: int, followup_question: str) -> None:
+    """Runs when the user submits a message via chat_input while viewing an
+    existing conversation -- answered ONLY from already-extracted findings
+    (cheap), same cost accounting as a full search."""
+    entry = st.session_state["search_history"][idx]
+    if remaining_searches() <= 0:
+        st.error(no_searches_left_message())
+        return
+    record_search_used()
+    backend.TOKEN_USAGE_LOG.clear()
+    try:
+        with st.spinner("جارٍ البحث عن إجابة..."):
+            result = answer_followup(
+                entry["question"], entry["stages"], followup_question,
+                backend.answer_followup_question,
+            )
+    except PipelineError as error:
+        print(f"[server-only log] PipelineError (followup): {error}")
+        st.error("تعذّر الإجابة على هذا السؤال بالاعتماد على النتائج الحالية.")
+    except ModelClientError as error:
+        print(f"[server-only log] ModelClientError (followup): {error}")
+        st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
+    else:
+        entry.setdefault("followups", []).append({"question": followup_question, **result})
+        _persist_entry(idx)
+        st.rerun()
 
 
 STAGE_LABELS = {
@@ -429,83 +443,90 @@ STAGE_LABELS = {
     7: "التحقق من النتائج",
 }
 
+def run_new_search(question: str) -> None:
+    record_search_used()
+
+    # Reset per-search so token usage doesn't accumulate across searches
+    # in the same running app (Streamlit reruns the script, but the
+    # imported run_assistant module -- and its state -- persists).
+    backend.TOKEN_USAGE_LOG.clear()
+
+    # user_message / technical_name are set on failure and rendered AFTER the
+    # status block closes, so an error is never hidden inside a collapsed
+    # status widget the user would have to re-expand.
+    stages = None
+    user_message = None
+    technical_name = None
+
+    with st.status("جارٍ تنفيذ البحث...", expanded=True) as status:
+        def on_progress(step: int, total: int, message: str) -> None:
+            label = STAGE_LABELS.get(step, message)
+            status.write(f"[{step}/{total}] {label}")
+
+        try:
+            stages = run_pipeline(
+                question,
+                query_generator=backend.generate_queries,
+                relevance_classifier=backend.classify_relevance,
+                extractor=backend.extract_findings,
+                synthesizer=backend.synthesize_final,
+                progress=on_progress,
+            )
+        except ModelClientError as error:
+            print(f"[server-only log] ModelClientError: {error}")  # console only, never shown in the browser
+            status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
+            user_message = "تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً."
+            technical_name = type(error).__name__
+        except PipelineError as error:
+            print(f"[server-only log] PipelineError: {error}")  # console only, never shown in the browser
+            status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
+            user_message = "تعذّر إكمال معالجة النتائج. يرجى المحاولة مرة أخرى أو تعديل السؤال."
+            technical_name = type(error).__name__
+        except Exception as error:
+            # Safety net: never show a raw traceback or internal details to the user.
+            status.update(label="حدث خطأ غير متوقع", state="error", expanded=False)
+            user_message = "حدث خطأ غير متوقع. لم يتم عرض أي نتيجة غير مكتملة."
+            technical_name = type(error).__name__
+        else:
+            status.update(label="اكتمل البحث", state="complete", expanded=False)
+
+    if user_message:
+        st.error(user_message)
+        with st.expander("تفاصيل تقنية"):
+            st.caption(technical_name)
+    elif stages is not None:
+        doc_id = history.save_search(st.session_state["user_email"], question, stages)
+        st.session_state["search_history"].append(
+            {"id": doc_id, "question": question, "stages": stages, "followups": []}
+        )
+        st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
+        st.rerun()
+
+
 if st.session_state["viewing_index"] is not None:
-    # Showing a completed search (either just-finished or from this
-    # session's history) -- same rendering either way, plus the
-    # expand/follow-up controls, which only apply to a completed result.
+    # Showing one conversation as a chat thread: the original question and
+    # full report as the first exchange, then any follow-up Q&A after it.
     idx = st.session_state["viewing_index"]
     entry = st.session_state["search_history"][idx]
-    st.subheader(entry["question"])
-    render_result(entry["question"], entry["stages"])
-    render_expand_and_followup(idx)
-else:
-    question = st.text_area(
-        "سؤالك البحثي",
-        height=130,
-        placeholder="مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟",
-    )
 
-    search_clicked = st.button("بحث", type="primary", use_container_width=True)
+    st.chat_message("user").write(entry["question"])
+    with st.chat_message("assistant"):
+        render_result(entry["question"], entry["stages"])
+        render_expand_button(idx)
+
+    render_followup_thread(idx)
+
     st.caption(f"عمليات البحث المتبقية لحسابك: {remaining_searches()}")
-
-    if search_clicked:
-        if not question.strip():
-            st.warning("الرجاء إدخال سؤال بحثي أولاً.")
-        elif remaining_searches() <= 0:
+    if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه النتائج..."):
+        handle_followup_input(idx, followup_prompt)
+else:
+    st.caption(f"عمليات البحث المتبقية لحسابك: {remaining_searches()}")
+    if new_question := st.chat_input(
+        "اكتب سؤالك البحثي، مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟"
+    ):
+        if remaining_searches() <= 0:
             st.error(no_searches_left_message())
         else:
-            record_search_used()
-
-            # Reset per-search so token usage doesn't accumulate across searches
-            # in the same running app (Streamlit reruns the script, but the
-            # imported run_assistant module -- and its state -- persists).
-            backend.TOKEN_USAGE_LOG.clear()
-
-            # user_message / technical_name are set on failure and rendered
-            # AFTER the status block closes, so an error is never hidden inside
-            # a collapsed status widget the user would have to re-expand.
-            stages = None
-            user_message = None
-            technical_name = None
-
-            with st.status("جارٍ تنفيذ البحث...", expanded=True) as status:
-                def on_progress(step: int, total: int, message: str) -> None:
-                    label = STAGE_LABELS.get(step, message)
-                    status.write(f"[{step}/{total}] {label}")
-
-                try:
-                    stages = run_pipeline(
-                        question,
-                        query_generator=backend.generate_queries,
-                        relevance_classifier=backend.classify_relevance,
-                        extractor=backend.extract_findings,
-                        synthesizer=backend.synthesize_final,
-                        progress=on_progress,
-                    )
-                except ModelClientError as error:
-                    print(f"[server-only log] ModelClientError: {error}")  # console only, never shown in the browser
-                    status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
-                    user_message = "تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً."
-                    technical_name = type(error).__name__
-                except PipelineError as error:
-                    print(f"[server-only log] PipelineError: {error}")  # console only, never shown in the browser
-                    status.update(label="تعذّر إتمام البحث", state="error", expanded=False)
-                    user_message = "تعذّر إكمال معالجة النتائج. يرجى المحاولة مرة أخرى أو تعديل السؤال."
-                    technical_name = type(error).__name__
-                except Exception as error:
-                    # Safety net: never show a raw traceback or internal details to the user.
-                    status.update(label="حدث خطأ غير متوقع", state="error", expanded=False)
-                    user_message = "حدث خطأ غير متوقع. لم يتم عرض أي نتيجة غير مكتملة."
-                    technical_name = type(error).__name__
-                else:
-                    status.update(label="اكتمل البحث", state="complete", expanded=False)
-
-            if user_message:
-                st.error(user_message)
-                with st.expander("تفاصيل تقنية"):
-                    st.caption(technical_name)
-            elif stages is not None:
-                st.session_state["search_history"].append({"question": question, "stages": stages})
-                st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
-                history.save_search(st.session_state["user_email"], question, stages)
-                st.rerun()
+            st.chat_message("user").write(new_question)
+            with st.chat_message("assistant"):
+                run_new_search(new_question)
