@@ -49,8 +49,13 @@ PER_PAPER_EXTRACTION_JSON_SCHEMA = {
 # Phase 2: final synthesis
 # ---------------------------------------------------------------------------
 
-FINAL_SYNTHESIS_MAX_DISAGREEMENTS = 2
-FINAL_SYNTHESIS_MAX_LIMITATIONS = 3
+# Must match the caps stated in pipeline_runner.format_final_synthesis_prompt()
+# -- raised alongside the full-length-output prompt changes; if the prompt's
+# limit and this validator's limit ever drift apart again, a real (correct)
+# model response that hits the new higher limit fails validation and the
+# whole search errors out as a PipelineError.
+FINAL_SYNTHESIS_MAX_DISAGREEMENTS = 3
+FINAL_SYNTHESIS_MAX_LIMITATIONS = 4
 
 FINAL_SYNTHESIS_REQUIRED_TOP_LEVEL_KEYS = {
     "where_studies_disagree", "what_cannot_be_concluded", "ai_synthesis",
