@@ -58,8 +58,16 @@ SESSION_TOKEN_MAX_AGE_DAYS = 30
 PLANS = ("normal", "pro", "max")
 
 # Generous but finite -- like a real paid plan's usage cap, not literally
-# unlimited. Easy to raise once real subscription pricing/revenue exists.
-SUBSCRIPTION_SEARCH_LIMIT = 200
+# unlimited. Lower for the pricier model tiers (mirrors ChatGPT/other AI
+# assistants giving smaller allowances for their higher-cost modes): "max"
+# uses Opus for every stage, which costs meaningfully more per search than
+# "normal"'s Sonnet, so its cap is smaller to keep worst-case real API cost
+# comparable across tiers instead of growing with the plan's price.
+SUBSCRIPTION_SEARCH_LIMITS = {
+    "normal": 100,
+    "pro": 70,
+    "max": 50,
+}
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -173,13 +181,14 @@ def grant_subscription(email: str, days: int, plan: str = "normal") -> None:
     account. Extends subscribed_until from the account's current value if
     that's still in the future (so renewing early doesn't lose remaining
     paid time), otherwise starts counting from now. Every grant/renewal
-    resets the search allowance to a fresh SUBSCRIPTION_SEARCH_LIMIT for the
-    new period -- paying again means a new period's allowance, not
-    indefinitely accumulating unused searches.
+    resets the search allowance to a fresh per-plan limit (see
+    SUBSCRIPTION_SEARCH_LIMITS) for the new period -- paying again means a
+    new period's allowance, not indefinitely accumulating unused searches.
 
     plan selects which models the account's searches use for the harder
     reasoning stages (see run_assistant.PLAN_MODELS) -- "normal" is the same
-    models every account already gets; "pro"/"max" cost more per search.
+    models every account already gets; "pro"/"max" cost more per search, so
+    they also get a smaller search allowance (SUBSCRIPTION_SEARCH_LIMITS).
     """
     if plan not in PLANS:
         raise AuthError(f"خطة غير معروفة: {plan}")
@@ -195,7 +204,7 @@ def grant_subscription(email: str, days: int, plan: str = "normal") -> None:
     new_until = start + timedelta(days=days)
     _accounts().document(email).set({
         "subscribed_until": new_until,
-        "subscription_search_limit": SUBSCRIPTION_SEARCH_LIMIT,
+        "subscription_search_limit": SUBSCRIPTION_SEARCH_LIMITS[plan],
         "subscription_used": 0,
         "plan": plan,
     }, merge=True)

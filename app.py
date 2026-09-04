@@ -256,9 +256,9 @@ def remaining_searches() -> int:
     a real budget safety net shouldn't have an exception for anyone.
 
     A subscribed (paying) account gets a separate, generous-but-finite
-    allowance (auth.SUBSCRIPTION_SEARCH_LIMIT per paid period) -- like a real
-    paid plan, not literally unlimited, so no single subscriber can exhaust
-    the whole site's budget alone.
+    allowance (auth.SUBSCRIPTION_SEARCH_LIMITS[plan] per paid period) -- like
+    a real paid plan, not literally unlimited, so no single subscriber can
+    exhaust the whole site's budget alone.
     """
     if global_limit.global_limit_reached():
         return 0
