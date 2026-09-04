@@ -45,8 +45,10 @@ EXTRACTION_MAX_TOKENS = 1000
 # each) + a ~200-220-word ai_synthesis, reasoning ONLY over the per-paper
 # findings (not the original abstracts). The target length was increased
 # (previously ~120 words), which pushed a live run over the old 1400 ceiling
-# and truncated -- raised to 1800 for real margin at the new target length.
-FINAL_SYNTHESIS_MAX_TOKENS = 1800
+# and truncated -- raised to 1800, then to 2600 after truncating again on a
+# real live search (some topics produce more disagreements/limitations than
+# the estimate assumed) -- real margin this time, not just a bump to 2000.
+FINAL_SYNTHESIS_MAX_TOKENS = 2600
 # Follow-up Q&A: a single ~120-150-word answer plus a short list of paper
 # ids, reasoning only over already-extracted findings (no abstracts). This
 # is a smaller job than final synthesis (one string field, not three), so a
