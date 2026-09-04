@@ -142,10 +142,14 @@ with st.sidebar:
         with st.expander("لوحة المالك: منح اشتراك"):
             grant_email = st.text_input("البريد الإلكتروني للمستخدم", key="grant_email")
             grant_days = st.number_input("عدد الأيام", min_value=1, value=30, step=1, key="grant_days")
+            grant_plan = st.selectbox(
+                "الخطة", options=list(auth.PLANS), index=0, key="grant_plan",
+                help="عادي: نفس النموذج المستخدم لكل الحسابات. المتقدم/الأقصى: نموذج أقوى وأعلى تكلفة لكل عملية بحث.",
+            )
             if st.button("منح الاشتراك", key="grant_button"):
                 try:
-                    auth.grant_subscription(grant_email, int(grant_days))
-                    st.success(f"تم منح الاشتراك لـ {grant_email.strip().lower()}.")
+                    auth.grant_subscription(grant_email, int(grant_days), plan=grant_plan)
+                    st.success(f"تم منح الاشتراك ({grant_plan}) لـ {grant_email.strip().lower()}.")
                 except auth.AuthError as e:
                     st.error(str(e))
 
@@ -208,7 +212,8 @@ def searches_caption() -> str:
     if account and auth.is_subscribed(account):
         until = account["subscribed_until"].strftime("%Y-%m-%d")
         left = auth.subscription_searches_remaining(account)
-        return f"اشتراكك فعّال حتى {until} — {left} عملية بحث متبقية لهذه الفترة."
+        plan = account.get("plan", "normal")
+        return f"اشتراكك فعّال حتى {until} — خطة {plan} — {left} عملية بحث متبقية لهذه الفترة."
     return f"عمليات البحث المتبقية لحسابك: {remaining_searches()}"
 
 
@@ -628,6 +633,12 @@ def run_new_search(question: str) -> None:
     # imported run_assistant module -- and its state -- persists).
     backend.TOKEN_USAGE_LOG.clear()
 
+    # Only a subscribed account's own plan affects model choice -- a
+    # free-tier account (or a subscription that expired) always gets
+    # "normal", regardless of any leftover "plan" value on the account.
+    account = auth.get_account(st.session_state["user_email"])
+    plan = account.get("plan", "normal") if account and auth.is_subscribed(account) else "normal"
+
     # user_message / technical_name are set on failure and rendered AFTER the
     # status block closes, so an error is never hidden inside a collapsed
     # status widget the user would have to re-expand.
@@ -644,9 +655,9 @@ def run_new_search(question: str) -> None:
             stages = run_pipeline(
                 question,
                 query_generator=backend.generate_queries,
-                relevance_classifier=backend.classify_relevance,
+                relevance_classifier=backend.make_relevance_classifier(plan),
                 extractor=backend.extract_findings,
-                synthesizer=backend.synthesize_final,
+                synthesizer=backend.make_synthesizer(plan),
                 progress=on_progress,
             )
         except ModelClientError as error:

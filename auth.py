@@ -16,6 +16,7 @@ Each account document:
         "subscribed_until": datetime | None,       # manually granted paid access
         "subscription_search_limit": int,          # searches allowed for the CURRENT paid period
         "subscription_used": int,                  # searches used in the current paid period
+        "plan": str,                               # "normal" | "pro" | "max" -- see run_assistant.PLAN_MODELS
     }
 
 A "subscribed" account (see grant_subscription/is_subscribed below) gets a
@@ -38,6 +39,11 @@ from firebase_admin import firestore
 from db import _get_client
 
 DEFAULT_SEARCH_LIMIT = 5
+
+# Kept as plain strings here (not imported from run_assistant.py) to keep
+# auth.py free of any model-calling dependency -- it only needs to validate
+# and store the plan name, not know which real models each one maps to.
+PLANS = ("normal", "pro", "max")
 
 # Generous but finite -- like a real paid plan's usage cap, not literally
 # unlimited. Easy to raise once real subscription pricing/revenue exists.
@@ -117,7 +123,7 @@ def subscription_searches_remaining(account: dict) -> int:
     return max(0, limit - used)
 
 
-def grant_subscription(email: str, days: int) -> None:
+def grant_subscription(email: str, days: int, plan: str = "normal") -> None:
     """
     Grants (or extends/renews) manually-paid subscription access for this
     account. Extends subscribed_until from the account's current value if
@@ -126,7 +132,14 @@ def grant_subscription(email: str, days: int) -> None:
     resets the search allowance to a fresh SUBSCRIPTION_SEARCH_LIMIT for the
     new period -- paying again means a new period's allowance, not
     indefinitely accumulating unused searches.
+
+    plan selects which models the account's searches use for the harder
+    reasoning stages (see run_assistant.PLAN_MODELS) -- "normal" is the same
+    models every account already gets; "pro"/"max" cost more per search.
     """
+    if plan not in PLANS:
+        raise AuthError(f"خطة غير معروفة: {plan}")
+
     email = email.strip().lower()
     account = get_account(email)
     if account is None:
@@ -140,4 +153,5 @@ def grant_subscription(email: str, days: int) -> None:
         "subscribed_until": new_until,
         "subscription_search_limit": SUBSCRIPTION_SEARCH_LIMIT,
         "subscription_used": 0,
+        "plan": plan,
     }, merge=True)

@@ -40,6 +40,20 @@ RELEVANCE_MODEL = "claude-sonnet-5"
 EXTRACTION_MODEL = "claude-haiku-4-5"
 SYNTHESIS_MODEL = "claude-sonnet-5"
 
+# Plan tiers: which model handles the two hardest reasoning stages
+# (relevance classification, final synthesis) for a subscribed account.
+# "normal" is the same models everyone (including free-tier/unsubscribed
+# accounts) already gets -- Pro/Max are a real, meaningfully more expensive
+# upgrade (Opus costs noticeably more per token than Sonnet), not yet
+# verified to actually produce better research synthesis for this specific
+# task -- confirm with a real side-by-side test before marketing "Max" as
+# provably better, not just "the app's most expensive model."
+PLAN_MODELS = {
+    "normal": {"relevance": RELEVANCE_MODEL, "synthesis": SYNTHESIS_MODEL},
+    "pro": {"relevance": RELEVANCE_MODEL, "synthesis": "claude-opus-5"},
+    "max": {"relevance": "claude-opus-5", "synthesis": "claude-opus-5"},
+}
+
 # Conservative but sufficient ceilings, based on actual response sizes
 # observed during testing -- not padded "just in case."
 QUERY_GEN_MAX_TOKENS = 300
@@ -100,6 +114,20 @@ def classify_relevance(prompt: str) -> str:
     return text
 
 
+def make_relevance_classifier(plan: str):
+    """Returns a relevance_classifier callable using the given plan's model
+    (see PLAN_MODELS) -- same call shape as classify_relevance(), just with
+    the model swapped in. Unknown plan names fall back to "normal"."""
+    model = PLAN_MODELS.get(plan, PLAN_MODELS["normal"])["relevance"]
+
+    def _classify(prompt: str) -> str:
+        text, usage = call_model_with_usage(prompt, model=model, max_tokens=RELEVANCE_MAX_TOKENS)
+        TOKEN_USAGE_LOG.append({"stage": "Relevance classification", "model": model, **usage})
+        return text
+
+    return _classify
+
+
 def _call_structured_with_usage_logging(prompt: str, model: str, max_tokens: int, schema: dict, stage_name: str) -> dict:
     """
     Shared helper for the two synthesis-stage calls: uses native structured
@@ -140,6 +168,21 @@ def synthesize_final(prompt: str) -> dict:
         prompt, model=SYNTHESIS_MODEL, max_tokens=FINAL_SYNTHESIS_MAX_TOKENS,
         schema=FINAL_SYNTHESIS_JSON_SCHEMA, stage_name="Final synthesis",
     )
+
+
+def make_synthesizer(plan: str):
+    """Returns a synthesizer callable using the given plan's model (see
+    PLAN_MODELS) -- same call shape as synthesize_final(), just with the
+    model swapped in. Unknown plan names fall back to "normal"."""
+    model = PLAN_MODELS.get(plan, PLAN_MODELS["normal"])["synthesis"]
+
+    def _synthesize(prompt: str) -> dict:
+        return _call_structured_with_usage_logging(
+            prompt, model=model, max_tokens=FINAL_SYNTHESIS_MAX_TOKENS,
+            schema=FINAL_SYNTHESIS_JSON_SCHEMA, stage_name="Final synthesis",
+        )
+
+    return _synthesize
 
 
 def answer_followup_question(prompt: str) -> dict:
