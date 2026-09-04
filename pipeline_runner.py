@@ -413,6 +413,17 @@ def run_pipeline(question: str, query_generator, relevance_classifier, extractor
     stages["search_report"] = search_report
 
     if not papers:
+        # Distinguish "OpenAlex genuinely found nothing" from "every query
+        # actually errored" (rate limit, timeout, 5xx) -- the generic
+        # message alone gave no way to tell which happened when this was
+        # hit live, even with Sentry capturing the exception.
+        per_query = search_report["per_query"]
+        errors = [f"{q!r}: {info['error']}" for q, info in per_query.items() if info["error"]]
+        if errors:
+            raise PipelineError(
+                "No papers were retrieved -- every query failed with an error "
+                f"(likely a transient OpenAlex issue): {'; '.join(errors)}"
+            )
         raise PipelineError("No papers were retrieved by any query -- cannot continue.")
     report(2, f"OpenAlex retrieval complete — {len(papers)} unique papers")
 
