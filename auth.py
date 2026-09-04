@@ -57,6 +57,10 @@ def create_account(email: str, password: str) -> None:
 
 def verify_login(email: str, password: str) -> bool:
     email = email.strip().lower()
+    if not email:
+        # An empty string is not a valid Firestore document id and would
+        # otherwise crash the whole app instead of just failing the login.
+        return False
     doc = _accounts().document(email).get()
     if not doc.exists:
         return False
