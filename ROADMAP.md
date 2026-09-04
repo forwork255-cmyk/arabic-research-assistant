@@ -53,6 +53,7 @@ The original plan had **14 items across 4 phases**. Only **9 are recorded below*
 
 - [x] Intermittent `PipelineError` on some questions — root-caused via Sentry: OpenAlex transient failures (429/5xx/timeout) had no retry and the real per-query errors were discarded from the exception message. Fixed in `openalex_search.fetch_results()` (one retry) and `pipeline_runner.py` (error message now surfaces the real cause). See commit `19b0ff8`.
 - [ ] Streamlit Cloud sometimes serves a stale/partially-reloaded module after a push (hit three times now: `FIREBASE_KEY`, `auth.is_subscribed`, `run_assistant.make_relevance_classifier`) — fix is always a full Reboot from the app's ⋮ menu, not just a save/refresh. Consider whether this is worth a standing habit: always Reboot after every push, not just when something breaks.
+- [x] `PipelineError` at the extraction stage after the full-length-output change — the prompt (`pipeline_runner.py`) was raised to allow up to 3 disagreements / 4 limitations, but `synthesis.py`'s validator caps were left at the old 2/3, so a correct, real model response hit "exceeding the maximum" and failed. Fixed by syncing the validator constants to the prompt's stated limits. See commit `f8537c9`. **General lesson: whenever a prompt's stated limit changes, the matching validator constant must change with it in the same edit** -- these two files drifting apart is exactly this bug's root cause, and it's an easy mistake to repeat.
 
 ## Pricing research (done, not yet applied to real prices)
 
