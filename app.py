@@ -19,17 +19,11 @@ Run with: streamlit run app.py
 import streamlit as st
 
 import run_assistant as backend
+import db
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
 st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
-
-# In-memory usage counter per access code: {code: searches_used}. This is
-# NOT a database -- it lives only in this running app's memory, so it
-# persists across visitors while the app stays up, but resets to zero on
-# every redeploy or restart. Good enough to stop one code from running up
-# unlimited API cost; not a real accounting system.
-_USAGE_COUNTS = {}
 
 
 def check_access_code() -> bool:
@@ -93,13 +87,13 @@ def remaining_searches() -> int:
     """How many searches are left on the currently logged-in code."""
     code = st.session_state["access_code"]
     limit = st.secrets.get("ACCESS_CODES", {}).get(code, 0)
-    used = _USAGE_COUNTS.get(code, 0)
+    used = db.get_used(code)
     return max(0, limit - used)
 
 
 def record_search_used() -> None:
     code = st.session_state["access_code"]
-    _USAGE_COUNTS[code] = _USAGE_COUNTS.get(code, 0) + 1
+    db.increment_used(code)
 
 
 # Light/Dark/"Use system setting" is handled by Streamlit's own built-in

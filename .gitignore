@@ -6,3 +6,4 @@
 venv/
 .streamlit/secrets.toml
 *.backup
+firebase-key.json
