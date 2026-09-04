@@ -58,15 +58,16 @@ SESSION_TOKEN_MAX_AGE_DAYS = 30
 PLANS = ("normal", "pro", "max")
 
 # Generous but finite -- like a real paid plan's usage cap, not literally
-# unlimited. Lower for the pricier model tiers (mirrors ChatGPT/other AI
-# assistants giving smaller allowances for their higher-cost modes): "max"
-# uses Opus for every stage, which costs meaningfully more per search than
-# "normal"'s Sonnet, so its cap is smaller to keep worst-case real API cost
-# comparable across tiers instead of growing with the plan's price.
+# unlimited. Flat 100 across every tier for marketing (a smaller "max" cap
+# reads as less appealing than "normal"), even though "max" costs more per
+# search (Opus vs Sonnet) -- accepted trade-off: most subscribers won't use
+# the full allowance, and global_limit.py's site-wide cap is the backstop
+# if that assumption turns out wrong. Easy to lower per-plan later once
+# real usage data exists (see ROADMAP.md).
 SUBSCRIPTION_SEARCH_LIMITS = {
     "normal": 100,
-    "pro": 70,
-    "max": 50,
+    "pro": 100,
+    "max": 100,
 }
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
