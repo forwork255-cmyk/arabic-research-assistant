@@ -16,6 +16,8 @@ or validation logic lives here.
 Run with: streamlit run app.py
 """
 
+import os
+
 import streamlit as st
 import sentry_sdk
 
@@ -40,6 +42,20 @@ if _sentry_dsn:
     sentry_sdk.init(dsn=_sentry_dsn, send_default_pii=False)
 
 
+def _read_legal_doc(filename: str) -> str:
+    # Strips the leading HTML comment (developer-only draft/review notes --
+    # st.markdown doesn't parse HTML comments, so left as-is it would show
+    # up as literal visible text instead of being hidden).
+    path = os.path.join(os.path.dirname(__file__), filename)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    if text.startswith("<!--"):
+        end = text.find("-->")
+        if end != -1:
+            text = text[end + len("-->"):].lstrip()
+    return text
+
+
 def show_login_and_signup() -> bool:
     """Email/password sign-up and login, backed by Firestore (see auth.py)."""
     if st.session_state.get("authenticated"):
@@ -62,14 +78,22 @@ def show_login_and_signup() -> bool:
     with signup_tab:
         new_email = st.text_input("البريد الإلكتروني", key="signup_email")
         new_password = st.text_input("كلمة المرور (8 أحرف على الأقل)", type="password", key="signup_password")
+        with st.expander("شروط الاستخدام وسياسة الخصوصية"):
+            st.markdown(_read_legal_doc("TERMS_OF_SERVICE.md"))
+            st.divider()
+            st.markdown(_read_legal_doc("PRIVACY_POLICY.md"))
+        agreed = st.checkbox("أوافق على شروط الاستخدام وسياسة الخصوصية", key="signup_agree")
         if st.button("إنشاء حساب"):
-            try:
-                auth.create_account(new_email, new_password)
-                st.session_state["authenticated"] = True
-                st.session_state["user_email"] = new_email.strip().lower()
-                st.rerun()
-            except auth.AuthError as e:
-                st.error(str(e))
+            if not agreed:
+                st.warning("يجب الموافقة على شروط الاستخدام وسياسة الخصوصية أولاً.")
+            else:
+                try:
+                    auth.create_account(new_email, new_password)
+                    st.session_state["authenticated"] = True
+                    st.session_state["user_email"] = new_email.strip().lower()
+                    st.rerun()
+                except auth.AuthError as e:
+                    st.error(str(e))
 
     return False
 
