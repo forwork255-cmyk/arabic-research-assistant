@@ -30,6 +30,7 @@ def save_search(email: str, question: str, stages: dict) -> str:
         "question": question,
         "stages": stages,
         "followups": [],
+        "starred": False,
         "created_at": firestore.SERVER_TIMESTAMP,
     })
     return doc_ref.id
@@ -43,8 +44,16 @@ def update_entry(email: str, doc_id: str, stages: dict, followups: list) -> None
     )
 
 
+def set_starred(email: str, doc_id: str, starred: bool) -> None:
+    _history_collection(email).document(doc_id).set({"starred": starred}, merge=True)
+
+
+def delete_entry(email: str, doc_id: str) -> None:
+    _history_collection(email).document(doc_id).delete()
+
+
 def get_history(email: str) -> list[dict]:
-    """Most recent searches first, each as {"id", "question", "stages", "followups"}."""
+    """Most recent searches first, each as {"id", "question", "stages", "followups", "starred"}."""
     docs = (
         _history_collection(email)
         .order_by("created_at", direction=firestore.Query.DESCENDING)
@@ -57,6 +66,7 @@ def get_history(email: str) -> list[dict]:
             "question": doc.get("question"),
             "stages": doc.get("stages"),
             "followups": doc.get("followups") or [],
+            "starred": doc.get("starred") or False,
         }
         for doc in docs
     ]

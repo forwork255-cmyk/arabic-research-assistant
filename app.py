@@ -123,12 +123,51 @@ with st.sidebar:
     if not st.session_state["search_history"]:
         st.caption("لا يوجد سجل بعد في هذه الجلسة.")
     else:
-        for i in range(len(st.session_state["search_history"]) - 1, -1, -1):
+        newest_first = list(range(len(st.session_state["search_history"]) - 1, -1, -1))
+        starred_order = [i for i in newest_first if st.session_state["search_history"][i].get("starred")]
+        other_order = [i for i in newest_first if not st.session_state["search_history"][i].get("starred")]
+
+        def _render_history_row(i: int) -> None:
             entry = st.session_state["search_history"][i]
             label = entry["question"][:40] + ("…" if len(entry["question"]) > 40 else "")
-            if st.button(label, key=f"history_{i}", use_container_width=True):
-                st.session_state["viewing_index"] = i
-                st.rerun()
+            col_open, col_star, col_delete = st.columns([7, 1, 1])
+            with col_open:
+                if st.button(label, key=f"history_{i}", use_container_width=True):
+                    st.session_state["viewing_index"] = i
+                    st.rerun()
+            with col_star:
+                star_icon = "⭐" if entry.get("starred") else "☆"
+                if st.button(star_icon, key=f"star_{i}", help="تمييز كمفضلة"):
+                    new_starred = not entry.get("starred", False)
+                    entry["starred"] = new_starred
+                    if entry.get("id"):
+                        history.set_starred(st.session_state["user_email"], entry["id"], new_starred)
+                    st.rerun()
+            with col_delete:
+                confirm_key = f"confirm_delete_{i}"
+                if st.session_state.get(confirm_key):
+                    if st.button("✔", key=f"delete_confirm_{i}", help="تأكيد الحذف نهائياً"):
+                        if entry.get("id"):
+                            history.delete_entry(st.session_state["user_email"], entry["id"])
+                        del st.session_state["search_history"][i]
+                        if st.session_state.get("viewing_index") == i:
+                            st.session_state["viewing_index"] = None
+                        elif st.session_state.get("viewing_index") is not None and st.session_state["viewing_index"] > i:
+                            st.session_state["viewing_index"] -= 1
+                        st.session_state.pop(confirm_key, None)
+                        st.rerun()
+                else:
+                    if st.button("🗑", key=f"delete_{i}", help="حذف"):
+                        st.session_state[confirm_key] = True
+                        st.rerun()
+
+        if starred_order:
+            st.caption("⭐ المفضلة")
+            for i in starred_order:
+                _render_history_row(i)
+            st.divider()
+        for i in other_order:
+            _render_history_row(i)
     st.caption("السجل محفوظ في حسابك، ويظهر عند تسجيل الدخول لاحقاً.")
 
     # Owner-only panel: manually grant subscription access to an account
@@ -664,7 +703,7 @@ def run_paper_analysis(pdf_bytes: bytes, filename: str, question: str) -> None:
         doc_id = history.save_search(st.session_state["user_email"], label, stages)
         st.session_state.setdefault("paper_pdf_cache", {})[doc_id] = pdf_base64
         st.session_state["search_history"].append(
-            {"id": doc_id, "question": label, "stages": stages, "followups": []}
+            {"id": doc_id, "question": label, "stages": stages, "followups": [], "starred": False}
         )
         st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
         st.rerun()
@@ -734,7 +773,7 @@ def run_new_search(question: str) -> None:
     elif stages is not None:
         doc_id = history.save_search(st.session_state["user_email"], question, stages)
         st.session_state["search_history"].append(
-            {"id": doc_id, "question": question, "stages": stages, "followups": []}
+            {"id": doc_id, "question": question, "stages": stages, "followups": [], "starred": False}
         )
         st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
         st.rerun()
