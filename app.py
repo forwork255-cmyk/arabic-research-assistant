@@ -148,7 +148,7 @@ with st.sidebar:
                     st.error(str(e))
 
 
-_SUBSCRIBED_SENTINEL = 999_999  # effectively unlimited for a manually-subscribed account (or the owner)
+_OWNER_SENTINEL = 999_999  # effectively unlimited -- the owner only, not regular subscribers
 
 
 def is_owner() -> bool:
@@ -161,24 +161,33 @@ def remaining_searches() -> int:
     How many searches are left on the currently logged-in account -- 0 if the
     site-wide emergency cap (global_limit.py) has been reached, regardless of
     this account's own remaining allowance. That cap protects the real API
-    budget from being drained by many accounts/sign-ups at once, not just one,
-    and applies even to subscribed accounts AND the owner -- a real budget
-    safety net shouldn't have an exception for anyone, including the owner.
+    budget from being drained by many accounts/sign-ups at once, not just
+    one, and applies to every account including subscribers and the owner --
+    a real budget safety net shouldn't have an exception for anyone.
+
+    A subscribed (paying) account gets a separate, generous-but-finite
+    allowance (auth.SUBSCRIPTION_SEARCH_LIMIT per paid period) -- like a real
+    paid plan, not literally unlimited, so no single subscriber can exhaust
+    the whole site's budget alone.
     """
     if global_limit.global_limit_reached():
         return 0
     if is_owner():
-        return _SUBSCRIBED_SENTINEL
+        return _OWNER_SENTINEL
     account = auth.get_account(st.session_state["user_email"])
     if account is None:
         return 0
     if auth.is_subscribed(account):
-        return _SUBSCRIBED_SENTINEL
+        return auth.subscription_searches_remaining(account)
     return max(0, account["search_limit"] - account["used"])
 
 
 def record_search_used() -> None:
-    auth.increment_used(st.session_state["user_email"])
+    account = auth.get_account(st.session_state["user_email"])
+    if account and auth.is_subscribed(account):
+        auth.increment_subscription_used(st.session_state["user_email"])
+    else:
+        auth.increment_used(st.session_state["user_email"])
     global_limit.increment_global_used()
 
 
@@ -196,7 +205,8 @@ def searches_caption() -> str:
     account = auth.get_account(st.session_state["user_email"])
     if account and auth.is_subscribed(account):
         until = account["subscribed_until"].strftime("%Y-%m-%d")
-        return f"اشتراكك فعّال حتى {until}."
+        left = auth.subscription_searches_remaining(account)
+        return f"اشتراكك فعّال حتى {until} — {left} عملية بحث متبقية لهذه الفترة."
     return f"عمليات البحث المتبقية لحسابك: {remaining_searches()}"
 
 

@@ -11,19 +11,22 @@ password cannot be recovered from it.
 Each account document:
     {
         "password_hash": bytes,
-        "search_limit": int,   # total searches this account may ever use
-        "used": int,           # searches used so far
-        "subscribed_until": datetime | None,  # manually granted paid access
+        "search_limit": int,   # total FREE-tier searches this account may ever use
+        "used": int,           # free-tier searches used so far
+        "subscribed_until": datetime | None,       # manually granted paid access
+        "subscription_search_limit": int,          # searches allowed for the CURRENT paid period
+        "subscription_used": int,                  # searches used in the current paid period
     }
 
-A "subscribed" account (see grant_subscription/is_subscribed below) skips the
-search_limit/used accounting entirely while subscribed_until is in the
-future -- this is the manual-payment model (customer pays the owner
-directly, e.g. bank transfer, exactly like a resold ChatGPT Team seat; the
-owner then grants access here). It is separate from, and simpler than, an
-automated payment gateway. The site-wide emergency cap (global_limit.py)
-still applies to subscribed accounts -- that protects the real API budget
-regardless of which accounts are using it.
+A "subscribed" account (see grant_subscription/is_subscribed below) gets a
+separate, generous-but-finite search allowance while subscribed_until is in
+the future -- like a real paid plan (e.g. ChatGPT Plus), not literally
+unlimited, so no single subscriber can exhaust the whole site's budget.
+This is the manual-payment model (customer pays the owner directly, e.g.
+bank transfer, exactly like a resold ChatGPT Team seat; the owner then
+grants access here) -- separate from, and simpler than, an automated
+payment gateway. The site-wide emergency cap (global_limit.py) still
+applies on top of this for every account, subscribed or not.
 """
 
 import re
@@ -35,6 +38,10 @@ from firebase_admin import firestore
 from db import _get_client
 
 DEFAULT_SEARCH_LIMIT = 5
+
+# Generous but finite -- like a real paid plan's usage cap, not literally
+# unlimited. Easy to raise once real subscription pricing/revenue exists.
+SUBSCRIPTION_SEARCH_LIMIT = 200
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -92,6 +99,11 @@ def increment_used(email: str) -> None:
     _accounts().document(email).set({"used": firestore.Increment(1)}, merge=True)
 
 
+def increment_subscription_used(email: str) -> None:
+    email = email.strip().lower()
+    _accounts().document(email).set({"subscription_used": firestore.Increment(1)}, merge=True)
+
+
 def is_subscribed(account: dict) -> bool:
     until = account.get("subscribed_until")
     if until is None:
@@ -99,12 +111,21 @@ def is_subscribed(account: dict) -> bool:
     return until > datetime.now(timezone.utc)
 
 
+def subscription_searches_remaining(account: dict) -> int:
+    limit = account.get("subscription_search_limit", 0)
+    used = account.get("subscription_used", 0)
+    return max(0, limit - used)
+
+
 def grant_subscription(email: str, days: int) -> None:
     """
-    Grants (or extends) manually-paid subscription access for this account.
-    Extends from the account's current subscribed_until if that's still in
-    the future (so renewing early doesn't lose remaining paid time),
-    otherwise starts counting from now.
+    Grants (or extends/renews) manually-paid subscription access for this
+    account. Extends subscribed_until from the account's current value if
+    that's still in the future (so renewing early doesn't lose remaining
+    paid time), otherwise starts counting from now. Every grant/renewal
+    resets the search allowance to a fresh SUBSCRIPTION_SEARCH_LIMIT for the
+    new period -- paying again means a new period's allowance, not
+    indefinitely accumulating unused searches.
     """
     email = email.strip().lower()
     account = get_account(email)
@@ -115,4 +136,8 @@ def grant_subscription(email: str, days: int) -> None:
     current_until = account.get("subscribed_until")
     start = current_until if (current_until and current_until > now) else now
     new_until = start + timedelta(days=days)
-    _accounts().document(email).set({"subscribed_until": new_until}, merge=True)
+    _accounts().document(email).set({
+        "subscribed_until": new_until,
+        "subscription_search_limit": SUBSCRIPTION_SEARCH_LIMIT,
+        "subscription_used": 0,
+    }, merge=True)
