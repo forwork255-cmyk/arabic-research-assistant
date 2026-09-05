@@ -228,6 +228,14 @@ if "search_history" not in st.session_state:
     st.session_state["search_history"] = list(reversed(history.get_history(st.session_state["user_email"])))
 st.session_state.setdefault("viewing_index", None)
 
+def toggle_star(idx: int) -> None:
+    entry = st.session_state["search_history"][idx]
+    new_starred = not entry.get("starred", False)
+    entry["starred"] = new_starred
+    if entry.get("id"):
+        history.set_starred(st.session_state["user_email"], entry["id"], new_starred)
+
+
 with st.sidebar:
     st.subheader("سجل البحث")
     if st.button("+ بحث جديد", use_container_width=True):
@@ -898,14 +906,6 @@ def _persist_entry(idx: int) -> None:
             st.session_state["user_email"], entry["id"],
             entry["stages"], entry.get("followups", []),
         )
-
-
-def toggle_star(idx: int) -> None:
-    entry = st.session_state["search_history"][idx]
-    new_starred = not entry.get("starred", False)
-    entry["starred"] = new_starred
-    if entry.get("id"):
-        history.set_starred(st.session_state["user_email"], entry["id"], new_starred)
 
 
 def render_expand_button(idx: int) -> None:
