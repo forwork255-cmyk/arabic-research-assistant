@@ -196,11 +196,32 @@ def make_synthesizer(plan: str):
 def answer_followup_question(prompt: str) -> dict:
     # Answers a follow-up question using ONLY the findings already extracted
     # in a completed run -- pipeline_runner.py's answer_followup() calls
-    # this once per follow-up question asked.
+    # this once per follow-up question asked. Fixed to FOLLOWUP_MODEL
+    # (normal tier) -- kept only for callers that don't have a plan to pass
+    # (e.g. a caller with no account context). Real search/expand/follow-up
+    # call sites in app.py should use make_followup_answerer(plan) instead,
+    # so a paying "pro"/"max" subscriber gets that tier's model in every
+    # follow-up turn of a conversation, not just the first message.
     return _call_structured_with_usage_logging(
         prompt, model=FOLLOWUP_MODEL, max_tokens=FOLLOWUP_MAX_TOKENS,
         schema=FOLLOWUP_JSON_SCHEMA, stage_name="Follow-up answer",
     )
+
+
+def make_followup_answerer(plan: str):
+    """Returns a followup_answerer callable using the given plan's synthesis
+    model (same tier boundary as final synthesis -- interpreting findings to
+    answer a follow-up is the same kind of reasoning task). Unknown plan
+    names fall back to "normal"."""
+    model = PLAN_MODELS.get(plan, PLAN_MODELS["normal"])["synthesis"]
+
+    def _answer(prompt: str) -> dict:
+        return _call_structured_with_usage_logging(
+            prompt, model=model, max_tokens=FOLLOWUP_MAX_TOKENS,
+            schema=FOLLOWUP_JSON_SCHEMA, stage_name="Follow-up answer",
+        )
+
+    return _answer
 
 
 def print_progress(step: int, total: int, message: str) -> None:

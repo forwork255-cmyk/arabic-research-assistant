@@ -246,6 +246,18 @@ def is_owner() -> bool:
     return bool(owner_email) and st.session_state["user_email"] == owner_email.strip().lower()
 
 
+def current_plan() -> str:
+    """Which model tier the logged-in account's searches should use. Only a
+    subscribed account's own plan affects model choice -- a free-tier account
+    (or a subscription that expired) always gets "normal", regardless of any
+    leftover "plan" value on the account. Used for every real model call the
+    user can trigger (new search, expand, follow-up, research-escalation),
+    not just the main search -- a "max" subscriber should get max-quality
+    answers throughout the whole conversation, not just the first message."""
+    account = auth.get_account(st.session_state["user_email"])
+    return account.get("plan", "normal") if account and auth.is_subscribed(account) else "normal"
+
+
 def remaining_searches() -> int:
     """
     How many searches are left on the currently logged-in account -- 0 if the
@@ -566,11 +578,12 @@ def render_expand_button(idx: int) -> None:
     elif st.button("+ أضف المزيد من الدراسات", key=f"expand_{idx}"):
         record_search_used()
         backend.TOKEN_USAGE_LOG.clear()
+        plan = current_plan()
         try:
             with st.spinner("جارٍ إضافة المزيد من الدراسات..."):
                 new_stages = expand_selection(
                     entry["question"], entry["stages"],
-                    backend.extract_findings, backend.synthesize_final,
+                    backend.extract_findings, backend.make_synthesizer(plan),
                 )
         except PipelineError as error:
             print(f"[server-only log] PipelineError (expand): {error}")
@@ -605,12 +618,13 @@ def render_followup_thread(idx: int) -> None:
                 elif st.button("ابحث عن دراسات جديدة لهذا السؤال (تكلفة إضافية)", key=f"research_followup_{idx}_{i}"):
                     record_search_used()
                     backend.TOKEN_USAGE_LOG.clear()
+                    plan = current_plan()
                     try:
                         with st.spinner("جارٍ البحث عن دراسات جديدة..."):
                             new_result = research_followup(
                                 entry["question"], entry["stages"], fu["question"],
-                                backend.generate_queries, backend.classify_relevance,
-                                backend.extract_findings, backend.answer_followup_question,
+                                backend.generate_queries, backend.make_relevance_classifier(plan),
+                                backend.extract_findings, backend.make_followup_answerer(plan),
                             )
                     except PipelineError as error:
                         print(f"[server-only log] PipelineError (research_followup): {error}")
@@ -645,7 +659,7 @@ def handle_followup_input(idx: int, followup_question: str) -> None:
         with st.spinner("جارٍ البحث عن إجابة..."):
             result = answer_followup(
                 entry["question"], entry["stages"], followup_question,
-                backend.answer_followup_question,
+                backend.make_followup_answerer(current_plan()),
             )
     except PipelineError as error:
         print(f"[server-only log] PipelineError (followup): {error}")
@@ -770,11 +784,7 @@ def run_new_search(question: str) -> None:
     # imported run_assistant module -- and its state -- persists).
     backend.TOKEN_USAGE_LOG.clear()
 
-    # Only a subscribed account's own plan affects model choice -- a
-    # free-tier account (or a subscription that expired) always gets
-    # "normal", regardless of any leftover "plan" value on the account.
-    account = auth.get_account(st.session_state["user_email"])
-    plan = account.get("plan", "normal") if account and auth.is_subscribed(account) else "normal"
+    plan = current_plan()
 
     # user_message / technical_name are set on failure and rendered AFTER the
     # status block closes, so an error is never hidden inside a collapsed
