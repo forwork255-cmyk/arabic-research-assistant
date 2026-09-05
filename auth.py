@@ -23,6 +23,9 @@ Each account document:
         "academic_level": str,                     # optional, one of ACADEMIC_LEVELS, blank by default
         "tone": str,                                # optional, one of TONE_OPTIONS, blank by default
         "custom_instructions": str,                 # optional free text, blank by default
+        "password_hint": str,                       # optional, self-set at signup, blank by default
+        "reset_token": str,                         # current password-reset token, or "" once used/cleared
+        "reset_token_created_at": datetime,         # for expiring old reset tokens
     }
 
 A "subscribed" account (see grant_subscription/is_subscribed below) gets a
@@ -62,6 +65,13 @@ FREE_DAILY_WINDOW = timedelta(hours=24)
 # account, not a token list. Expires after SESSION_TOKEN_MAX_AGE_DAYS so a
 # stale/copied link doesn't work forever.
 SESSION_TOKEN_MAX_AGE_DAYS = 30
+
+# Password reset: a random opaque token emailed as a link (?reset_token=...),
+# short-lived (unlike the "remember me" token above, which is meant to last)
+# since a reset link sitting in an inbox is a real, if small, exposure
+# window. Same single-active-token pattern -- requesting a new reset link
+# invalidates any previous one.
+RESET_TOKEN_MAX_AGE = timedelta(hours=1)
 
 # Kept as plain strings here (not imported from run_assistant.py) to keep
 # auth.py free of any model-calling dependency -- it only needs to validate
@@ -103,7 +113,7 @@ def _accounts():
     return _get_client().collection("accounts")
 
 
-def create_account(email: str, password: str) -> None:
+def create_account(email: str, password: str, password_hint: str = "") -> None:
     email = email.strip().lower()
     if not _EMAIL_RE.match(email):
         raise AuthError("البريد الإلكتروني غير صالح.")
@@ -117,6 +127,7 @@ def create_account(email: str, password: str) -> None:
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
     doc_ref.set({
         "password_hash": password_hash,
+        "password_hint": password_hint.strip(),
     })
 
 
@@ -171,6 +182,52 @@ def clear_session_token(email: str) -> None:
     """Invalidates the account's "remember me" token (e.g. on logout)."""
     email = email.strip().lower()
     _accounts().document(email).set({"session_token": ""}, merge=True)
+
+
+def create_reset_token(email: str) -> str | None:
+    """Issues a new password-reset token for this account and returns it
+    (to be emailed as a link), or None if no account exists for this email
+    -- callers should show the same neutral "if this email is registered..."
+    message either way, so a forgot-password attempt can't be used to probe
+    which emails have accounts. Overwrites any previous reset token."""
+    email = email.strip().lower()
+    if get_account(email) is None:
+        return None
+    token = secrets.token_urlsafe(32)
+    _accounts().document(email).set({
+        "reset_token": token,
+        "reset_token_created_at": datetime.now(timezone.utc),
+    }, merge=True)
+    return token
+
+
+def verify_reset_token(email: str, token: str) -> bool:
+    """True if `token` is this specific account's current, still-valid
+    reset token."""
+    if not token:
+        return False
+    account = get_account(email)
+    if account is None:
+        return False
+    if account.get("reset_token") != token:
+        return False
+    created_at = account.get("reset_token_created_at")
+    return bool(created_at and datetime.now(timezone.utc) - created_at <= RESET_TOKEN_MAX_AGE)
+
+
+def reset_password(email: str, token: str, new_password: str) -> None:
+    """Sets a new password after verifying the reset token, and clears the
+    token so it can't be reused (a reset link is meant to work once)."""
+    if not verify_reset_token(email, token):
+        raise AuthError("رابط إعادة التعيين غير صالح أو منتهي الصلاحية. يرجى طلب رابط جديد.")
+    if len(new_password) < 8:
+        raise AuthError("كلمة المرور يجب أن تكون 8 أحرف على الأقل.")
+    email = email.strip().lower()
+    password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt())
+    _accounts().document(email).set({
+        "password_hash": password_hash,
+        "reset_token": "",
+    }, merge=True)
 
 
 def update_profile(

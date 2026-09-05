@@ -30,6 +30,7 @@ import global_limit
 import moderation
 import paper_analysis
 import general_qa
+import email_sender
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, draft_writing, PipelineError
 from model_client import ModelClientError
 
@@ -58,6 +59,45 @@ def _read_legal_doc(filename: str) -> str:
         if end != -1:
             text = text[end + len("-->"):].lstrip()
     return text
+
+
+def show_reset_password_form() -> None:
+    """Handles the emailed reset link (?reset_token=...&reset_email=...).
+    Shown in place of the login form when those query params are present,
+    regardless of any other session currently logged in in this browser --
+    resetting a password shouldn't depend on being logged out first."""
+    token = st.query_params.get("reset_token", "")
+    email = st.query_params.get("reset_email", "")
+
+    st.title("📚 مساعد البحث العلمي العربي")
+    st.subheader("إعادة تعيين كلمة المرور")
+
+    if not auth.verify_reset_token(email, token):
+        st.error("رابط إعادة التعيين غير صالح أو منتهي الصلاحية. يرجى طلب رابط جديد من صفحة تسجيل الدخول.")
+        if st.button("العودة إلى تسجيل الدخول"):
+            st.query_params.clear()
+            st.rerun()
+        return
+
+    account = auth.get_account(email) or {}
+    hint = (account.get("password_hint") or "").strip()
+    if hint:
+        st.info(f"تلميحك المحفوظ لكلمة المرور: {hint}")
+
+    new_password = st.text_input("كلمة المرور الجديدة (8 أحرف على الأقل)", type="password", key="reset_new_password")
+    confirm_password = st.text_input("تأكيد كلمة المرور", type="password", key="reset_confirm_password")
+    if st.button("تعيين كلمة المرور الجديدة"):
+        if new_password != confirm_password:
+            st.error("كلمتا المرور غير متطابقتين.")
+        else:
+            try:
+                auth.reset_password(email, token, new_password)
+            except auth.AuthError as e:
+                st.error(str(e))
+            else:
+                st.session_state["_password_reset_success"] = True
+                st.query_params.clear()
+                st.rerun()
 
 
 def _start_session(email: str) -> None:
@@ -93,6 +133,8 @@ def show_login_and_signup() -> bool:
     login_tab, signup_tab = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
 
     with login_tab:
+        if st.session_state.pop("_password_reset_success", False):
+            st.success("تم تغيير كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.")
         email = st.text_input("البريد الإلكتروني", key="login_email")
         password = st.text_input("كلمة المرور", type="password", key="login_password")
         if st.button("دخول"):
@@ -102,9 +144,37 @@ def show_login_and_signup() -> bool:
             else:
                 st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
 
+        with st.expander("نسيت كلمة المرور؟"):
+            forgot_email = st.text_input("البريد الإلكتروني", key="forgot_email")
+            if st.button("إرسال رابط إعادة التعيين", key="send_reset"):
+                app_url = st.secrets.get("APP_URL", "").rstrip("/")
+                gmail_address = st.secrets.get("GMAIL_ADDRESS", "")
+                gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD", "")
+                if not app_url or not gmail_address or not gmail_app_password:
+                    st.error("لم يتم إعداد إرسال البريد الإلكتروني بعد. يرجى مراجعة المالك.")
+                else:
+                    token = auth.create_reset_token(forgot_email)
+                    if token:
+                        reset_link = f"{app_url}/?reset_token={token}&reset_email={forgot_email.strip().lower()}"
+                        try:
+                            email_sender.send_password_reset_email(
+                                gmail_address, gmail_app_password, forgot_email.strip().lower(), reset_link,
+                            )
+                        except email_sender.EmailSendError as error:
+                            print(f"[server-only log] EmailSendError: {error}")
+                            sentry_sdk.capture_exception(error)
+                    # Same message whether or not the account/send actually
+                    # succeeded -- an error here would leak which emails are
+                    # registered; real send failures still reach Sentry above.
+                    st.success("إذا كان هذا البريد الإلكتروني مسجلاً لدينا، فسيصلك رابط لإعادة تعيين كلمة المرور خلال دقائق.")
+
     with signup_tab:
         new_email = st.text_input("البريد الإلكتروني", key="signup_email")
         new_password = st.text_input("كلمة المرور (8 أحرف على الأقل)", type="password", key="signup_password")
+        new_hint = st.text_input(
+            "تلميح لكلمة المرور (اختياري)", key="signup_hint",
+            help="يظهر لك لاحقاً إذا نسيت كلمة المرور، بعد التحقق من بريدك الإلكتروني. لا تكتب كلمة المرور نفسها هنا.",
+        )
         with st.expander("شروط الاستخدام وسياسة الخصوصية"):
             st.markdown(_read_legal_doc("TERMS_OF_SERVICE.md"))
             st.divider()
@@ -115,7 +185,7 @@ def show_login_and_signup() -> bool:
                 st.warning("يجب الموافقة على شروط الاستخدام وسياسة الخصوصية أولاً.")
             else:
                 try:
-                    auth.create_account(new_email, new_password)
+                    auth.create_account(new_email, new_password, password_hint=new_hint)
                     _start_session(new_email)
                     st.rerun()
                 except auth.AuthError as e:
@@ -123,6 +193,10 @@ def show_login_and_signup() -> bool:
 
     return False
 
+
+if st.query_params.get("reset_token"):
+    show_reset_password_form()
+    st.stop()
 
 if not show_login_and_signup():
     st.stop()
