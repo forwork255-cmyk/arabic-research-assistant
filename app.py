@@ -487,6 +487,15 @@ st.markdown(
        unless a fixed width is forced here. */
     section[data-testid="stSidebar"] { min-width: 300px !important; width: 300px !important; }
     section[data-testid="stSidebar"] > div { width: 300px !important; direction: rtl; text-align: right; }
+    /* Streamlit collapses the sidebar with a hardcoded translateX(-300px)
+       (assumes a left-side, LTR sidebar). In this RTL layout the sidebar
+       sits on the right, so sliding it further left shoves it into the
+       main content instead of off-screen -- leaving a reserved-but-empty
+       gap and a collapse toggle that appears to jump between positions.
+       Overriding to the opposite direction sends it fully off-screen to
+       the right instead, confirmed live in the browser (both collapse and
+       reopen) before this was written here. */
+    section[data-testid="stSidebar"][aria-expanded="false"] { transform: translateX(300px) !important; }
     </style>
     """,
     unsafe_allow_html=True,
