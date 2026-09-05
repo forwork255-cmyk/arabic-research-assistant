@@ -46,18 +46,20 @@ Deployed and live (Streamlit Community Cloud), with real user accounts, persiste
 - `openalex_search.py` — OpenAlex API access and paper metadata/abstract reconstruction.
 - `search_pipeline.py` — multi-query retrieval, merging, deduplication, and deterministic retrieval statistics.
 - `.claude/skills/research-search-workflow/SKILL.md` — generates bounded English and Arabic search queries from an Arabic academic question.
-- `relevance_filter.py` — deterministic selection/reporting around model-provided relevance classifications.
+- `relevance_filter.py` — deterministic selection/reporting around model-provided relevance classifications; also owns `RELEVANCE_JSON_SCHEMA` for that stage's structured output.
 - `synthesis.py` — builds the restricted synthesis input packet and validates the model's structured synthesis output.
 - `pipeline_runner.py` — orchestrates the full pipeline (query gen → retrieval → relevance → selection → extraction → synthesis) plus expand/follow-up/research-follow-up flows.
-- `run_assistant.py` — the only file supplying real model calls (via `model_client.py`), one function per pipeline stage, each logging token usage.
-- `moderation.py` — safety check on user questions before they reach the real pipeline.
+- `paper_analysis.py` — single-PDF upload analysis: prompts for summarizing or answering a question about one attached research paper (Claude's native PDF document support, not our own text extraction), separate from the multi-paper OpenAlex-search flow.
+- `run_assistant.py` — the only file supplying real model calls (via `model_client.py`), one function per pipeline stage, each logging token usage. `PLAN_MODELS` maps each subscription plan (normal/pro/max) to which model handles relevance classification, synthesis, and follow-up answering.
+- `model_client.py` — the only file that talks to the Anthropic API directly. Every model-dependent task (moderation, query generation, relevance classification, evidence extraction, synthesis, follow-up Q&A, single-paper analysis) uses Anthropic's native JSON Schema structured output (not "please return valid JSON" prompting) wherever the output needs an exact shape -- this structurally prevents a model response from adding an unexpected field instead of just catching it after the fact.
+- `moderation.py` — safety check on user-submitted text before it reaches the real pipeline. Uses a context-specific prompt depending on what the text actually is (a freestanding research question, a caption on an uploaded paper, or a follow-up in an existing thread) -- judging a short contextual input against the "is this a real research question" bar made for a freestanding question is a recurring bug class here.
 - `db.py` — shared Firestore connection.
-- `auth.py` — accounts (bcrypt password hashing) and manually-granted subscriptions (pay-the-owner-directly model).
-- `history.py` — persistent per-account search history.
+- `auth.py` — accounts (bcrypt password hashing), manually-granted subscriptions (pay-the-owner-directly model), and "remember me" session tokens for persisting login across a page refresh.
+- `history.py` — persistent per-account search history (including starred/deleted state).
 - `global_limit.py` — site-wide emergency cap on total real searches, protecting the API budget regardless of account count.
 - `app.py` — the Streamlit UI, chat-based (`st.chat_message`/`st.chat_input`), no pipeline/prompt/model logic of its own.
 
-The model-dependent tasks are: moderation, query generation, relevance classification, evidence extraction, evidence synthesis, and follow-up Q&A. Deterministic Python handles API retrieval, deduplication, selection rules, input assembly, and output validation for all of them.
+The model-dependent tasks are: moderation, query generation, relevance classification, evidence extraction, evidence synthesis, follow-up Q&A, and single-paper analysis. Deterministic Python handles API retrieval, deduplication, selection rules, input assembly, and output validation for all of them.
 
 ## Established product principles
 
