@@ -28,6 +28,7 @@ import history
 import global_limit
 import moderation
 import paper_analysis
+import general_qa
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
 from model_client import ModelClientError
 
@@ -340,6 +341,31 @@ def is_question_appropriate(question: str, prompt_builder=moderation.format_mode
     if result["appropriate"]:
         return True, None
     return False, result["reason"]
+
+
+def classify_question_type(question: str) -> tuple:
+    """Routes a new top-level question: 'research' -> the existing grounded/
+    cited pipeline (run_new_search), 'general' -> the lightweight general-
+    answer path (run_general_qa), or 'unsafe' -> rejected. Only used at the
+    main new-search entry point -- paper uploads and follow-ups keep using
+    is_question_appropriate() unchanged.
+
+    Fails OPEN as 'research' (the original, stricter behavior) if the
+    classification call itself errors or returns a malformed result -- same
+    fail-open philosophy as is_question_appropriate(), erring toward the
+    existing behavior rather than silently changing it on an infra hiccup.
+    """
+    try:
+        result = backend.classify_question_type(moderation.format_question_classification_prompt(question))
+    except ModelClientError as error:
+        print(f"[server-only log] Question classification failed, defaulting to research: {error}")
+        sentry_sdk.capture_exception(error)
+        return "research", None
+    if not moderation.validate_question_classification_output(result):
+        print(f"[server-only log] Question classification returned malformed output, defaulting to research: {result}")
+        sentry_sdk.capture_message(f"Question classification returned malformed output: {result}")
+        return "research", None
+    return result["category"], result["reason"]
 
 
 # Light/Dark/"Use system setting" is handled by Streamlit's own built-in
@@ -708,6 +734,54 @@ def render_paper_analysis(stages: dict) -> None:
     st.caption("هذا التحليل مبني فقط على محتوى الملف المرفق.")
 
 
+def render_general_answer(stages: dict) -> None:
+    st.write(stages["answer"])
+    st.caption("💬 هذه إجابة عامة من الذكاء الاصطناعي، وليست نتيجة بحث أكاديمي موثقة بمصادر حقيقية.")
+
+
+def run_general_qa(question: str) -> None:
+    """A question that isn't a research question (see
+    moderation.format_question_classification_prompt) -- one lightweight
+    model call, no OpenAlex search, no citations claimed. Same cost
+    accounting as a real search (record_search_used()), same error-handling
+    shape as run_paper_analysis()."""
+    record_search_used()
+    backend.TOKEN_USAGE_LOG.clear()
+    prompt = general_qa.format_general_answer_prompt(question)
+
+    answer_text = None
+    user_message = None
+    technical_name = None
+
+    with st.spinner("جارٍ التحضير..."):
+        try:
+            answer_text = backend.answer_general_question(prompt)
+        except ModelClientError as error:
+            print(f"[server-only log] ModelClientError (general qa): {error}")
+            sentry_sdk.capture_exception(error)
+            user_message = "تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً."
+            technical_name = type(error).__name__
+        except Exception as error:
+            print(f"[server-only log] Unexpected error (general qa): {error}")
+            sentry_sdk.capture_exception(error)
+            user_message = "حدث خطأ غير متوقع."
+            technical_name = type(error).__name__
+
+    if user_message:
+        st.error(user_message)
+        with st.expander("تفاصيل تقنية"):
+            st.caption(technical_name)
+    else:
+        stages = {"kind": "general_qa", "answer": answer_text}
+        doc_id = history.save_search(st.session_state["user_email"], question, stages)
+        st.session_state["search_history"].append({
+            "id": doc_id, "question": question, "stages": stages, "followups": [], "starred": False,
+            "token_usage": list(backend.TOKEN_USAGE_LOG),
+        })
+        st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
+        st.rerun()
+
+
 def render_paper_followup_thread(idx: int) -> None:
     entry = st.session_state["search_history"][idx]
     for fu in entry.get("followups", []):
@@ -873,34 +947,41 @@ if st.session_state["viewing_index"] is not None:
             toggle_star(idx)
             st.rerun()
 
+    entry_kind = entry["stages"].get("kind")
+
     st.chat_message("user").write(entry["question"])
     with st.chat_message("assistant"):
-        if entry["stages"].get("kind") == "paper_analysis":
+        if entry_kind == "paper_analysis":
             render_paper_analysis(entry["stages"])
+        elif entry_kind == "general_qa":
+            render_general_answer(entry["stages"])
+            render_token_usage(entry.get("token_usage"))
         else:
             render_result(entry["question"], entry["stages"], entry.get("token_usage"))
             render_expand_button(idx)
 
-    if entry["stages"].get("kind") == "paper_analysis":
+    if entry_kind == "paper_analysis":
         render_paper_followup_thread(idx)
-    else:
+    elif entry_kind != "general_qa":
         render_followup_thread(idx)
 
     st.caption(searches_caption())
-    if entry["stages"].get("kind") == "paper_analysis":
+    if entry_kind == "paper_analysis":
         if entry.get("id") in st.session_state.get("paper_pdf_cache", {}):
             if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه الورقة..."):
                 handle_paper_followup_input(idx, followup_prompt)
         else:
             st.caption("لطرح سؤال جديد حول هذه الورقة، يرجى رفعها مرة أخرى في محادثة جديدة.")
+    elif entry_kind == "general_qa":
+        st.caption("لا تتوفر أسئلة متابعة لهذا النوع من الإجابات حالياً -- ابدأ محادثة جديدة لسؤال آخر.")
     else:
         if followup_prompt := st.chat_input("اكتب سؤالاً إضافياً حول هذه النتائج..."):
             handle_followup_input(idx, followup_prompt)
 else:
     st.caption(searches_caption())
-    st.caption("يمكنك أيضاً إرفاق ورقة بحثية (PDF) لتحليلها مباشرة، مع سؤال أو بدونه.")
+    st.caption("يمكنك أيضاً إرفاق ورقة بحثية (PDF) لتحليلها مباشرة، مع سؤال أو بدونه. كما يمكنك طرح سؤال عام غير بحثي.")
     if submitted := st.chat_input(
-        "اكتب سؤالك البحثي، مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟",
+        "اكتب سؤالك، بحثياً كان أو عاماً، مثال: ما تأثير استخدام الذكاء الاصطناعي التوليدي على التحصيل الأكاديمي لدى طلبة الجامعات؟",
         accept_file=True, file_type=["pdf"],
     ):
         question_text = submitted.text.strip()
@@ -930,9 +1011,11 @@ else:
         elif question_text:
             st.chat_message("user").write(question_text)
             with st.chat_message("assistant"):
-                appropriate, reason = is_question_appropriate(question_text)
-                if not appropriate:
+                category, reason = classify_question_type(question_text)
+                if category == "unsafe":
                     st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
+                elif category == "general":
+                    run_general_qa(question_text)
                 else:
                     run_new_search(question_text)
         else:

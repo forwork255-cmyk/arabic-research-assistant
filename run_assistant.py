@@ -16,7 +16,7 @@ import sys
 from model_client import call_model_with_usage, call_model_structured, call_model_with_document, ModelClientError, TruncatedResponseError
 from pipeline_runner import run_pipeline, PipelineError
 from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA
-from moderation import MODERATION_JSON_SCHEMA
+from moderation import MODERATION_JSON_SCHEMA, QUESTION_CLASSIFICATION_JSON_SCHEMA
 from relevance_filter import RELEVANCE_JSON_SCHEMA
 
 # A small, fast classification task -- not cross-paper reasoning -- so Haiku
@@ -30,6 +30,13 @@ MODERATION_MAX_TOKENS = 200
 # and a similar output ceiling.
 PAPER_ANALYSIS_MODEL = "claude-sonnet-5"
 PAPER_ANALYSIS_MAX_TOKENS = 2000
+
+# General (non-research) questions: a normal helpful-assistant answer, no
+# literature search, no citations claimed -- see general_qa.py. Not tied to
+# the research plan tiers (normal/pro/max); every account gets the same
+# model here, at least for this first version.
+GENERAL_ANSWER_MODEL = "claude-sonnet-5"
+GENERAL_ANSWER_MAX_TOKENS = 1500
 
 QUERY_GEN_MODEL = "claude-haiku-4-5"
 RELEVANCE_MODEL = "claude-sonnet-5"
@@ -96,11 +103,29 @@ def check_question_moderation(prompt: str) -> dict:
     return parsed
 
 
+def classify_question_type(prompt: str) -> dict:
+    # Routes a new top-level question to the research pipeline, the general-
+    # answer path, or rejects it -- see moderation.format_question_classification_prompt().
+    # Same accounting treatment as check_question_moderation(): runs before
+    # anything is committed to, so not logged into the per-search total.
+    parsed, _usage = call_model_structured(
+        prompt, model=MODERATION_MODEL, max_tokens=MODERATION_MAX_TOKENS,
+        schema=QUESTION_CLASSIFICATION_JSON_SCHEMA,
+    )
+    return parsed
+
+
 def analyze_paper(prompt: str, pdf_base64: str) -> str:
     text, usage = call_model_with_document(
         prompt, pdf_base64, model=PAPER_ANALYSIS_MODEL, max_tokens=PAPER_ANALYSIS_MAX_TOKENS,
     )
     TOKEN_USAGE_LOG.append({"stage": "Paper analysis", "model": PAPER_ANALYSIS_MODEL, **usage})
+    return text
+
+
+def answer_general_question(prompt: str) -> str:
+    text, usage = call_model_with_usage(prompt, model=GENERAL_ANSWER_MODEL, max_tokens=GENERAL_ANSWER_MAX_TOKENS)
+    TOKEN_USAGE_LOG.append({"stage": "General answer", "model": GENERAL_ANSWER_MODEL, **usage})
     return text
 
 
