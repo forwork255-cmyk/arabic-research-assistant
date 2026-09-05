@@ -653,6 +653,24 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Owner-only red/black skin -- pure cosmetic, only injected into the
+# owner's own session's HTML, so it cannot affect any other account's view
+# (each Streamlit session renders independently; this isn't a shared
+# server-side theme change like .streamlit/config.toml).
+if is_owner():
+    st.markdown(
+        """
+        <style>
+        .stApp { background-color: #000000 !important; color: #FFFFFF !important; }
+        section[data-testid="stSidebar"], section[data-testid="stSidebar"] > div { background-color: #1A0000 !important; }
+        h1, h2, h3, p, span, label, .stMarkdown { color: #FFFFFF !important; }
+        .stButton button[kind="primary"] { background-color: #C81E1E !important; border-color: #C81E1E !important; color: #FFFFFF !important; }
+        .stButton button[kind="secondary"] { border-color: #C81E1E !important; color: #FFFFFF !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 st.title("📚 مساعد البحث العلمي العربي")
 st.markdown(
     '<p class="app-subtitle">اكتب سؤالاً بحثياً أكاديمياً باللغة العربية. سيقوم النظام بالبحث عن دراسات '
