@@ -441,7 +441,25 @@ def build_report_text(question: str, stages: dict) -> str:
     return "\n".join(lines)
 
 
-def render_result(question: str, stages: dict) -> None:
+def render_token_usage(token_usage: list | None) -> None:
+    """Renders a token-usage expander for an explicit snapshot (NOT the
+    live backend.TOKEN_USAGE_LOG) -- that global always holds whatever
+    action ran most recently, so reading it directly here would show a
+    follow-up's usage under the original result, or vice versa, whichever
+    ran last. Each caller must pass its own snapshot, taken right after its
+    own model call(s) completed."""
+    if not token_usage:
+        return
+    with st.expander("استخدام الرموز / Token usage"):
+        total_in = total_out = 0
+        for usage_row in token_usage:
+            st.write(f"{usage_row['stage']} ({usage_row['model']}): {usage_row['input_tokens']} in / {usage_row['output_tokens']} out")
+            total_in += usage_row["input_tokens"]
+            total_out += usage_row["output_tokens"]
+        st.write(f"**المجموع:** {total_in} input / {total_out} output tokens")
+
+
+def render_result(question: str, stages: dict, token_usage: list | None = None) -> None:
     queries = stages["queries"]
     search_report = stages["search_report"]
     relevance_report = stages["relevance_report"]
@@ -536,14 +554,7 @@ def render_result(question: str, stages: dict) -> None:
         mime="text/plain",
     )
 
-    if backend.TOKEN_USAGE_LOG:
-        with st.expander("استخدام الرموز / Token usage"):
-            total_in = total_out = 0
-            for entry in backend.TOKEN_USAGE_LOG:
-                st.write(f"{entry['stage']} ({entry['model']}): {entry['input_tokens']} in / {entry['output_tokens']} out")
-                total_in += entry["input_tokens"]
-                total_out += entry["output_tokens"]
-            st.write(f"**المجموع:** {total_in} input / {total_out} output tokens")
+    render_token_usage(token_usage)
 
 
 def _persist_entry(idx: int) -> None:
@@ -595,6 +606,7 @@ def render_expand_button(idx: int) -> None:
             st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
         else:
             st.session_state["search_history"][idx]["stages"] = new_stages
+            st.session_state["search_history"][idx]["token_usage"] = list(backend.TOKEN_USAGE_LOG)
             _persist_entry(idx)
             st.rerun()
 
@@ -610,6 +622,7 @@ def render_followup_thread(idx: int) -> None:
             all_sources = entry["stages"]["synthesis"]["sources"] + fu.get("new_sources", [])
             if fu["supporting_paper_ids"]:
                 st.caption("المصادر: " + format_source_links(fu["supporting_paper_ids"], all_sources))
+            render_token_usage(fu.get("token_usage"))
 
             if fu.get("sufficient") is False and not fu.get("researched"):
                 st.caption("لم تكن النتائج الحالية كافية للإجابة على هذا السؤال.")
@@ -636,6 +649,7 @@ def render_followup_thread(idx: int) -> None:
                         st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
                     else:
                         new_result["researched"] = True
+                        new_result["token_usage"] = list(backend.TOKEN_USAGE_LOG)
                         entry["followups"][i] = {"question": fu["question"], **new_result}
                         _persist_entry(idx)
                         st.rerun()
@@ -672,6 +686,7 @@ def handle_followup_input(idx: int, followup_question: str) -> None:
         sentry_sdk.capture_exception(error)
         st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
     else:
+        result["token_usage"] = list(backend.TOKEN_USAGE_LOG)
         entry.setdefault("followups", []).append({"question": followup_question, **result})
         _persist_entry(idx)
         st.rerun()
@@ -837,9 +852,10 @@ def run_new_search(question: str) -> None:
             st.caption(technical_name)
     elif stages is not None:
         doc_id = history.save_search(st.session_state["user_email"], question, stages)
-        st.session_state["search_history"].append(
-            {"id": doc_id, "question": question, "stages": stages, "followups": [], "starred": False}
-        )
+        st.session_state["search_history"].append({
+            "id": doc_id, "question": question, "stages": stages, "followups": [], "starred": False,
+            "token_usage": list(backend.TOKEN_USAGE_LOG),
+        })
         st.session_state["viewing_index"] = len(st.session_state["search_history"]) - 1
         st.rerun()
 
@@ -862,7 +878,7 @@ if st.session_state["viewing_index"] is not None:
         if entry["stages"].get("kind") == "paper_analysis":
             render_paper_analysis(entry["stages"])
         else:
-            render_result(entry["question"], entry["stages"])
+            render_result(entry["question"], entry["stages"], entry.get("token_usage"))
             render_expand_button(idx)
 
     if entry["stages"].get("kind") == "paper_analysis":
