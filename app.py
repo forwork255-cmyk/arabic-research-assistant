@@ -649,7 +649,9 @@ def handle_followup_input(idx: int, followup_question: str) -> None:
     if remaining_searches() <= 0:
         st.error(no_searches_left_message())
         return
-    appropriate, reason = is_question_appropriate(followup_question)
+    appropriate, reason = is_question_appropriate(
+        followup_question, prompt_builder=moderation.format_followup_moderation_prompt
+    )
     if not appropriate:
         st.error(f"لا يمكن معالجة هذا السؤال. {reason}")
         return
