@@ -519,12 +519,14 @@ def searches_caption() -> str:
     account = auth.get_account(st.session_state["user_email"])
     if account and auth.is_subscribed(account):
         until = account["subscribed_until"].strftime("%Y-%m-%d")
-        left = auth.subscription_searches_remaining(account)
         plan = account.get("plan", "normal")
-        # Only "max" is named -- normal/pro subscribers don't need to see
-        # their own tier's internal name, no reason to show it.
-        plan_note = " — خطة max" if plan == "max" else ""
-        return f"اشتراكك فعّال حتى {until}{plan_note} — {left} عملية بحث متبقية لهذه الفترة."
+        # Only "max" shows its plan name AND remaining count -- normal/pro
+        # subscribers see just their subscription validity, nothing about
+        # the internal tier name or search cap.
+        if plan == "max":
+            left = auth.subscription_searches_remaining(account)
+            return f"اشتراكك فعّال حتى {until} — خطة max — {left} عملية بحث متبقية لهذه الفترة."
+        return f"اشتراكك فعّال حتى {until}."
     left = auth.free_searches_remaining(account) if account else 0
     if left > 0:
         return f"🆓 الحساب المجاني: {left} من {auth.FREE_DAILY_SEARCH_LIMIT} عمليات بحث متبقية اليوم (يتجدد كل 24 ساعة)."
