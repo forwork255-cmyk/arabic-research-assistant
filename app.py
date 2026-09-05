@@ -597,7 +597,14 @@ def classify_question_type(question: str) -> tuple:
 st.markdown(
     """
     <style>
-    .stApp { direction: rtl; text-align: right; }
+    /* Arabic-optimized web font -- the app previously specified no font at
+       all, falling back to whatever generic system font the browser picks,
+       which renders Arabic poorly. Loaded via standard CSS @import (not a
+       Streamlit-specific API), so it works regardless of Streamlit version;
+       falls back cleanly to a generic sans-serif if it can't load (e.g. no
+       internet reaching Google Fonts). */
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap');
+    .stApp { direction: rtl; text-align: right; font-family: 'IBM Plex Sans Arabic', sans-serif; }
     .stTextArea textarea { direction: rtl; text-align: right; font-size: 1.05rem; padding: 0.9rem; }
     .stButton button { direction: rtl; }
     h1 { margin-bottom: 0.2rem; }
@@ -705,6 +712,17 @@ def build_report_text(question: str, stages: dict) -> str:
     nothing new is generated here.
     """
     synthesis = stages["synthesis"]
+    sources_by_short_id = {short_id(s["openalex_id"]): s for s in synthesis["sources"]}
+
+    def cite(paper_ids: list) -> str:
+        # A DOI/URL is a real, checkable academic reference; the internal
+        # OpenAlex short ID (e.g. "W123456") means nothing outside this app.
+        refs = []
+        for pid in paper_ids:
+            source = sources_by_short_id.get(pid)
+            refs.append((source and (source.get("doi") or source.get("url"))) or pid)
+        return ", ".join(refs)
+
     lines = [
         "السؤال البحثي",
         question,
@@ -713,13 +731,13 @@ def build_report_text(question: str, stages: dict) -> str:
     ]
     for item in synthesis["what_studies_found"]:
         lines.append(f"- {item['claim']}")
-        lines.append(f"  (المصادر: {', '.join(item['supporting_paper_ids'])})")
+        lines.append(f"  (المصادر: {cite(item['supporting_paper_ids'])})")
 
     if synthesis.get("where_studies_disagree"):
         lines += ["", "مواضع الاختلاف"]
         for item in synthesis["where_studies_disagree"]:
             lines.append(f"- {item['issue']}")
-            lines.append(f"  (المصادر: {', '.join(item['supporting_paper_ids'])})")
+            lines.append(f"  (المصادر: {cite(item['supporting_paper_ids'])})")
 
     if synthesis.get("what_cannot_be_concluded"):
         lines += ["", "ما لا يمكن استنتاجه"]
@@ -964,10 +982,11 @@ def render_followup_thread(idx: int) -> None:
     for i, fu in enumerate(entry.get("followups", [])):
         st.chat_message("user").write(fu["question"])
         with st.chat_message("assistant"):
-            st.write(fu["answer"])
             all_sources = entry["stages"]["synthesis"]["sources"] + fu.get("new_sources", [])
-            if fu["supporting_paper_ids"]:
-                st.caption("المصادر: " + format_source_links(fu["supporting_paper_ids"], all_sources))
+            transformed_answer, ordered_ids = numbered_draft_citations(fu["answer"], fu["supporting_paper_ids"], all_sources)
+            st.write(transformed_answer)
+            if ordered_ids:
+                st.caption("المصادر:  \n" + format_numbered_source_list(ordered_ids, all_sources))
             render_token_usage(fu.get("token_usage"))
 
             if fu.get("sufficient") is False and not fu.get("researched"):
