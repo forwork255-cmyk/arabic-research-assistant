@@ -86,7 +86,7 @@ def show_reset_password_form() -> None:
 
     new_password = st.text_input("كلمة المرور الجديدة (8 أحرف على الأقل)", type="password", key="reset_new_password")
     confirm_password = st.text_input("تأكيد كلمة المرور", type="password", key="reset_confirm_password")
-    if st.button("تعيين كلمة المرور الجديدة"):
+    if st.button("تعيين كلمة المرور الجديدة", type="primary"):
         if new_password != confirm_password:
             st.error("كلمتا المرور غير متطابقتين.")
         else:
@@ -137,7 +137,7 @@ def show_login_and_signup() -> bool:
             st.success("تم تغيير كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.")
         email = st.text_input("البريد الإلكتروني", key="login_email")
         password = st.text_input("كلمة المرور", type="password", key="login_password")
-        if st.button("دخول"):
+        if st.button("دخول", type="primary"):
             if auth.verify_login(email, password):
                 _start_session(email)
                 st.rerun()
@@ -146,7 +146,7 @@ def show_login_and_signup() -> bool:
 
         with st.expander("نسيت كلمة المرور؟"):
             forgot_email = st.text_input("البريد الإلكتروني", key="forgot_email")
-            if st.button("إرسال رابط إعادة التعيين", key="send_reset"):
+            if st.button("إرسال رابط إعادة التعيين", key="send_reset", type="primary"):
                 app_url = st.secrets.get("APP_URL", "").rstrip("/")
                 gmail_address = st.secrets.get("GMAIL_ADDRESS", "")
                 gmail_app_password = st.secrets.get("GMAIL_APP_PASSWORD", "")
@@ -196,7 +196,7 @@ def show_login_and_signup() -> bool:
             st.divider()
             st.markdown(_read_legal_doc("PRIVACY_POLICY.md"))
         agreed = st.checkbox("أوافق على شروط الاستخدام وسياسة الخصوصية", key="signup_agree")
-        if st.button("إنشاء حساب"):
+        if st.button("إنشاء حساب", type="primary"):
             if not agreed:
                 st.warning("يجب الموافقة على شروط الاستخدام وسياسة الخصوصية أولاً.")
             else:
@@ -238,7 +238,7 @@ def toggle_star(idx: int) -> None:
 
 with st.sidebar:
     st.subheader("سجل البحث")
-    if st.button("+ بحث جديد", use_container_width=True):
+    if st.button("+ بحث جديد", use_container_width=True, type="primary"):
         st.session_state["viewing_index"] = None
         st.rerun()
     st.divider()
@@ -339,7 +339,7 @@ with st.sidebar:
             key="profile_instructions", max_chars=auth.CUSTOM_INSTRUCTIONS_MAX_LEN,
             help="مثال: \"اشرح لي بأسلوب مبسّط لأني لست متخصصاً\" أو \"استخدم أمثلة عملية دائماً\".",
         )
-        if st.button("حفظ الملف الشخصي", key="save_profile"):
+        if st.button("حفظ الملف الشخصي", key="save_profile", type="primary"):
             try:
                 auth.update_profile(
                     st.session_state["user_email"], profile_field, profile_level,
