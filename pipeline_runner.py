@@ -24,7 +24,7 @@ from synthesis import (
     build_single_paper_extraction_input, validate_single_paper_extraction, short_id,
     build_final_synthesis_input, validate_final_synthesis_output,
     combine_synthesis_stages, build_followup_input, validate_followup_output,
-    build_final_sources,
+    build_final_sources, build_draft_input, validate_draft_output,
 )
 
 
@@ -300,6 +300,62 @@ def answer_followup(question: str, stages: dict, follow_up_question: str, follow
         )
 
     return followup_output
+
+
+def format_draft_prompt(draft_input: dict) -> str:
+    """
+    Programmatically build a draft-writing prompt. Writes ONE free-form
+    academic paragraph (not the app's fixed research-report template) using
+    ONLY the already-extracted findings from a completed search -- no new
+    papers, no new retrieval, no original abstracts, no outside knowledge.
+    """
+    return (
+        "Below is a research question and a short list of already-extracted findings "
+        "(each grounded in one source paper). Write ONE well-structured academic-style "
+        "paragraph in Arabic that synthesizes these findings, suitable for use in the "
+        "literature-review section of a research paper -- free-flowing prose, NOT the "
+        "app's usual structured report format (no headers, no bullet lists).\n\n"
+        "GROUNDING RULES (strict):\n"
+        "1. Write using only the findings below.\n"
+        "2. Every paper_id in supporting_paper_ids must come only from the findings below.\n"
+        "3. Never invent a result, number, sample size, method, country, effect size, quotation, "
+        "or conclusion beyond what the findings state.\n"
+        "4. Never convert correlation into causation.\n"
+        "5. When citing a specific finding inline, reference it by its paper_id in parentheses, "
+        "e.g. \"(W123456)\" -- exactly as given below, so it can be turned into a real source link "
+        "afterward.\n\n"
+        "OUTPUT LIMITS:\n"
+        "- draft: one paragraph, approximately 200-300 Arabic words, no introduction or framing "
+        "sentences outside the paragraph itself.\n"
+        "- supporting_paper_ids: every paper_id actually cited inline in the paragraph.\n\n"
+        f"INPUT (JSON):\n{json.dumps(draft_input, ensure_ascii=False, indent=2)}\n\n"
+        "Write the paragraph in Arabic."
+    )
+
+
+def draft_writing(question: str, stages: dict, drafter) -> dict:
+    """
+    Writes one free-form academic paragraph using ONLY the findings already
+    extracted in a completed run -- no new API calls beyond this one.
+    Returns {"draft": str, "supporting_paper_ids": list}. Raises
+    PipelineError on malformed or ungrounded output, same fail-safe rules as
+    answer_followup().
+    """
+    extraction_findings = _extraction_findings_from_stages(stages)
+    draft_input = build_draft_input(question, extraction_findings)
+    draft_prompt = format_draft_prompt(draft_input)
+
+    draft_raw = drafter(draft_prompt)
+    draft_output = draft_raw if isinstance(draft_raw, dict) else parse_strict_json(draft_raw)
+
+    known_paper_ids = {f["paper_id"] for f in extraction_findings}
+    problems = validate_draft_output(draft_output, known_paper_ids)
+    if problems:
+        raise PipelineError(
+            "Draft-writing output failed validation:\n" + "\n".join(f" - {p}" for p in problems)
+        )
+
+    return draft_output
 
 
 FOLLOWUP_RESEARCH_MAX_PAPERS = 3  # kept small -- this path costs roughly a full search each time

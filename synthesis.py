@@ -342,3 +342,71 @@ def validate_followup_output(output, known_paper_ids: set) -> list:
         problems.append("'sufficient' must be a boolean")
 
     return problems
+
+
+# ---------------------------------------------------------------------------
+# Free-form academic draft: writes a paragraph (not the fixed research-report
+# template) using ONLY the same compact findings final synthesis already
+# uses -- no new papers, no original abstracts, nothing outside what this
+# search already retrieved and cited.
+# ---------------------------------------------------------------------------
+
+DRAFT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "draft": {"type": "string"},
+        "supporting_paper_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["draft", "supporting_paper_ids"],
+    "additionalProperties": False,
+}
+
+
+def build_draft_input(question: str, extraction_findings: list) -> dict:
+    """Build the packet for a draft-writing call: the original question and
+    the same compact findings final synthesis already uses. Deliberately no
+    abstracts, no bibliography, no writing_request -- this first version
+    always asks for the same thing (one grounded academic paragraph)."""
+    return {
+        "question": question,
+        "findings": [
+            {"paper_id": f["paper_id"], "finding": f["finding"]}
+            for f in extraction_findings
+        ],
+    }
+
+
+def validate_draft_output(output, known_paper_ids: set) -> list:
+    """Deterministic checks for a draft-writing answer. known_paper_ids is
+    the set of paper IDs present in the findings this call was given.
+    Returns a list of problems (empty = passed)."""
+    if not isinstance(output, dict):
+        return [f"Draft output must be a JSON object, got {type(output).__name__}"]
+
+    problems = []
+    actual_keys = set(output.keys())
+    required_keys = {"draft", "supporting_paper_ids"}
+
+    missing_keys = required_keys - actual_keys
+    if missing_keys:
+        problems.append(f"Missing required field(s): {sorted(missing_keys)}")
+    extra_keys = actual_keys - required_keys
+    if extra_keys:
+        problems.append(f"Unexpected field(s) not allowed: {sorted(extra_keys)}")
+
+    draft = output.get("draft")
+    if not isinstance(draft, str) or not draft.strip():
+        problems.append("'draft' must be a non-empty string")
+
+    pids = output.get("supporting_paper_ids")
+    if not isinstance(pids, list) or not all(isinstance(p, str) for p in pids):
+        problems.append("'supporting_paper_ids' must be a list of strings (may be empty)")
+    else:
+        for pid in pids:
+            if pid not in known_paper_ids:
+                problems.append(f"cites unknown paper ID {pid}")
+
+    return problems

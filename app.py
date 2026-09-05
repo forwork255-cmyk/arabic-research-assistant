@@ -29,7 +29,7 @@ import global_limit
 import moderation
 import paper_analysis
 import general_qa
-from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, PipelineError
+from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, draft_writing, PipelineError
 from model_client import ModelClientError
 
 st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
@@ -637,6 +637,49 @@ def render_expand_button(idx: int) -> None:
             st.rerun()
 
 
+def render_draft_section(idx: int) -> None:
+    """'✍️ صياغة فقرة أكاديمية': free-form academic paragraph (recovered
+    roadmap item #6), written using ONLY this search's already-extracted
+    findings -- no new retrieval, nothing beyond what's already cited here.
+    Same cost accounting as a follow-up. Not persisted to Firestore yet
+    (session-only, like token_usage) -- regenerating costs the same as the
+    first generation, so losing it on logout is a minor inconvenience, not
+    a real problem, for this first version."""
+    entry = st.session_state["search_history"][idx]
+    draft = entry.get("draft")
+
+    if draft:
+        st.divider()
+        st.subheader("✍️ فقرة أكاديمية مقترحة")
+        st.write(draft["draft"])
+        if draft["supporting_paper_ids"]:
+            st.caption("المصادر: " + format_source_links(draft["supporting_paper_ids"], entry["stages"]["synthesis"]["sources"]))
+        render_token_usage(draft.get("token_usage"))
+
+    label = "🔄 إعادة الصياغة" if draft else "✍️ صياغة فقرة أكاديمية باستخدام هذه النتائج"
+    if remaining_searches() <= 0:
+        st.caption(no_searches_left_message())
+    elif st.button(label, key=f"draft_{idx}"):
+        record_search_used()
+        backend.TOKEN_USAGE_LOG.clear()
+        plan = current_plan()
+        try:
+            with st.spinner("جارٍ صياغة الفقرة..."):
+                new_draft = draft_writing(entry["question"], entry["stages"], backend.make_drafter(plan))
+        except PipelineError as error:
+            print(f"[server-only log] PipelineError (draft): {error}")
+            sentry_sdk.capture_exception(error)
+            st.error("تعذّر صياغة الفقرة بالاعتماد على النتائج الحالية.")
+        except ModelClientError as error:
+            print(f"[server-only log] ModelClientError (draft): {error}")
+            sentry_sdk.capture_exception(error)
+            st.error("تعذّر الاتصال بنموذج الذكاء الاصطناعي. يرجى المحاولة مرة أخرى لاحقاً.")
+        else:
+            new_draft["token_usage"] = list(backend.TOKEN_USAGE_LOG)
+            entry["draft"] = new_draft
+            st.rerun()
+
+
 def render_followup_thread(idx: int) -> None:
     """Renders past follow-up Q&A as chat bubbles, and offers the opt-in
     real-research escalation when the cheap answer says it wasn't enough."""
@@ -959,6 +1002,7 @@ if st.session_state["viewing_index"] is not None:
         else:
             render_result(entry["question"], entry["stages"], entry.get("token_usage"))
             render_expand_button(idx)
+            render_draft_section(idx)
 
     if entry_kind == "paper_analysis":
         render_paper_followup_thread(idx)

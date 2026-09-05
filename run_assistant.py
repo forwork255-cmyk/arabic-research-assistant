@@ -15,7 +15,7 @@ import sys
 
 from model_client import call_model_with_usage, call_model_structured, call_model_with_document, ModelClientError, TruncatedResponseError
 from pipeline_runner import run_pipeline, PipelineError
-from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA
+from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA, DRAFT_JSON_SCHEMA
 from moderation import MODERATION_JSON_SCHEMA, QUESTION_CLASSIFICATION_JSON_SCHEMA
 from relevance_filter import RELEVANCE_JSON_SCHEMA
 
@@ -85,6 +85,11 @@ FINAL_SYNTHESIS_MAX_TOKENS = 6000
 # lower ceiling is appropriate.
 FOLLOWUP_MODEL = "claude-sonnet-5"
 FOLLOWUP_MAX_TOKENS = 700
+# Draft writing: one ~200-300-word free-form academic paragraph, reasoning
+# only over already-extracted findings (no abstracts) -- same input scope as
+# follow-up Q&A, so a similar ceiling, just a bit higher for one full
+# paragraph instead of a short answer.
+DRAFT_MAX_TOKENS = 1200
 
 # Token usage for each real model call this run, logged as
 # {"stage": str, "model": str, "input_tokens": int, "output_tokens": int}.
@@ -216,6 +221,22 @@ def make_synthesizer(plan: str):
         )
 
     return _synthesize
+
+
+def make_drafter(plan: str):
+    """Returns a drafter callable for pipeline_runner.draft_writing(), using
+    the given plan's synthesis-tier model (same reasoning task as final
+    synthesis -- writing free-form prose from already-extracted findings).
+    Unknown plan names fall back to "normal"."""
+    model = PLAN_MODELS.get(plan, PLAN_MODELS["normal"])["synthesis"]
+
+    def _draft(prompt: str) -> dict:
+        return _call_structured_with_usage_logging(
+            prompt, model=model, max_tokens=DRAFT_MAX_TOKENS,
+            schema=DRAFT_JSON_SCHEMA, stage_name="Draft writing",
+        )
+
+    return _draft
 
 
 def answer_followup_question(prompt: str) -> dict:
