@@ -2,8 +2,7 @@
 
 ## My situation
 
-I am a complete beginner in programming and have almost no coding experience.
-I am using Claude Code to help me build this project. I want to understand the important fundamentals while using AI to do much of the implementation.
+I started this project with almost no coding experience, but I've been building and shipping this for a while now and understand the fundamentals well enough to direct, test, debug, and improve AI-generated software (see the global CLAUDE.md for how I want to work in general). I'm no longer asking for a simplified/demo version -- build this properly, to the standard of a real product people pay for.
 
 ## Project goal
 
@@ -23,9 +22,9 @@ A user should eventually be able to:
 - Never invent papers, authors, journals, DOI numbers, quotations, statistics, or findings.
 - Important claims must be traceable to real sources.
 - Clearly separate retrieved evidence from AI interpretation.
-- Prefer reliable scholarly sources.
-- Keep the system as simple and inexpensive as possible.
-- Build the smallest useful MVP before adding advanced features.
+- Prefer reliable scholarly sources, and explain source limitations rather than glossing over them.
+- Arabic is a first-class language for the UI and explanations, but English-language scholarly literature should also be searched when useful.
+- Keep the system as simple and inexpensive as possible -- this means avoiding unnecessary complexity, not limiting the product to MVP/demo quality.
 - Avoid unnecessary dependencies and complexity.
 - Do not build features just because they sound impressive.
 - Assume I have a very limited budget.
