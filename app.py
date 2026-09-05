@@ -168,6 +168,22 @@ def show_login_and_signup() -> bool:
                     # registered; real send failures still reach Sentry above.
                     st.success("إذا كان هذا البريد الإلكتروني مسجلاً لدينا، فسيصلك رابط لإعادة تعيين كلمة المرور خلال دقائق.")
 
+        with st.expander("عرض تلميح كلمة المرور"):
+            # Deliberate tradeoff, chosen by the app owner: unlike the
+            # reset link above, this shows the hint just from typing an
+            # email, with no proof of inbox access -- a real, known
+            # information leak (confirms whether an email is registered,
+            # and shows its hint to anyone who types it), accepted here for
+            # convenience on a low-stakes app rather than security.
+            hint_email = st.text_input("البريد الإلكتروني", key="hint_email")
+            if st.button("عرض التلميح", key="show_hint"):
+                hint_account = auth.get_account(hint_email) if hint_email else None
+                saved_hint = (hint_account.get("password_hint") or "").strip() if hint_account else ""
+                if saved_hint:
+                    st.info(f"التلميح المحفوظ: {saved_hint}")
+                else:
+                    st.warning("لا يوجد تلميح محفوظ لهذا البريد الإلكتروني.")
+
     with signup_tab:
         new_email = st.text_input("البريد الإلكتروني", key="signup_email")
         new_password = st.text_input("كلمة المرور (8 أحرف على الأقل)", type="password", key="signup_password")
