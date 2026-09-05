@@ -210,6 +210,32 @@ with st.sidebar:
             _render_history_row(i)
     st.caption("السجل محفوظ في حسابك، ويظهر عند تسجيل الدخول لاحقاً.")
 
+    # Self-reported profile (field of study / academic level): every account
+    # gets this, regardless of plan -- it only steers tone/vocabulary in the
+    # AI's own interpretive writing (never which real evidence is found or
+    # what it says), and costs nothing extra, so there's no reason to gate
+    # it behind a paid tier.
+    st.divider()
+    with st.expander("👤 الملف الشخصي"):
+        _account = auth.get_account(st.session_state["user_email"]) or {}
+        profile_field = st.text_input(
+            "المجال الدراسي (اختياري)", value=_account.get("field_of_study", ""), key="profile_field",
+            help="مثال: علم النفس، الاقتصاد، الطب. يُستخدم فقط لضبط أسلوب ومصطلحات الإجابة، ولا يغيّر الأدلة الفعلية.",
+        )
+        level_options = ("",) + auth.ACADEMIC_LEVELS
+        current_level = _account.get("academic_level", "")
+        profile_level = st.selectbox(
+            "المستوى الأكاديمي (اختياري)", options=level_options,
+            index=level_options.index(current_level) if current_level in level_options else 0,
+            key="profile_level",
+        )
+        if st.button("حفظ الملف الشخصي", key="save_profile"):
+            try:
+                auth.update_profile(st.session_state["user_email"], profile_field, profile_level)
+                st.success("تم حفظ الملف الشخصي.")
+            except auth.AuthError as e:
+                st.error(str(e))
+
     # Owner-only panel: manually grant subscription access to an account
     # after the owner has received payment outside the app (bank transfer,
     # cash, etc.) -- the same model as reselling a shared subscription seat.
@@ -258,6 +284,46 @@ def current_plan() -> str:
     answers throughout the whole conversation, not just the first message."""
     account = auth.get_account(st.session_state["user_email"])
     return account.get("plan", "normal") if account and auth.is_subscribed(account) else "normal"
+
+
+def profile_context_note() -> str:
+    """A short instruction built from the account's self-reported profile
+    (see the "الملف الشخصي" sidebar section), or "" if nothing is set.
+    Deliberately says "for tone/vocabulary only" -- this must never change
+    which real evidence is found, selected, or what it says; only how the
+    AI's own interpretive writing is phrased."""
+    account = auth.get_account(st.session_state["user_email"])
+    if not account:
+        return ""
+    field = (account.get("field_of_study") or "").strip()
+    level = (account.get("academic_level") or "").strip()
+    if not field and not level:
+        return ""
+    parts = []
+    if field:
+        parts.append(f"مجال دراسة المستخدم: {field}")
+    if level:
+        parts.append(f"المستوى الأكاديمي للمستخدم: {level}")
+    return (
+        "ملاحظة عن المستخدم (للأسلوب والمصطلحات فقط -- لا تغيّر بها أي حقيقة أو نتيجة أو استنتاج): "
+        + "، ".join(parts) + "."
+    )
+
+
+def with_profile_context(fn):
+    """Wraps a prompt->result callable so the user's profile note (if any)
+    is prepended before the real prompt. Used on every interpretive-writing
+    call site (final synthesis, follow-up answers, draft writing) so
+    personalization applies consistently across a whole conversation --
+    same reasoning as current_plan()'s docstring above."""
+    note = profile_context_note()
+    if not note:
+        return fn
+
+    def wrapped(prompt: str):
+        return fn(note + "\n\n" + prompt)
+
+    return wrapped
 
 
 def remaining_searches() -> int:
@@ -661,7 +727,7 @@ def render_expand_button(idx: int) -> None:
             with st.spinner("جارٍ إضافة المزيد من الدراسات..."):
                 new_stages = expand_selection(
                     entry["question"], entry["stages"],
-                    backend.extract_findings, backend.make_synthesizer(plan),
+                    backend.extract_findings, with_profile_context(backend.make_synthesizer(plan)),
                 )
         except PipelineError as error:
             print(f"[server-only log] PipelineError (expand): {error}")
@@ -708,7 +774,7 @@ def render_draft_section(idx: int) -> None:
         plan = current_plan()
         try:
             with st.spinner("جارٍ صياغة الفقرة..."):
-                new_draft = draft_writing(entry["question"], entry["stages"], backend.make_drafter(plan))
+                new_draft = draft_writing(entry["question"], entry["stages"], with_profile_context(backend.make_drafter(plan)))
         except PipelineError as error:
             print(f"[server-only log] PipelineError (draft): {error}")
             sentry_sdk.capture_exception(error)
@@ -749,7 +815,7 @@ def render_followup_thread(idx: int) -> None:
                             new_result = research_followup(
                                 entry["question"], entry["stages"], fu["question"],
                                 backend.generate_queries, backend.make_relevance_classifier(plan),
-                                backend.extract_findings, backend.make_followup_answerer(plan),
+                                backend.extract_findings, with_profile_context(backend.make_followup_answerer(plan)),
                             )
                     except PipelineError as error:
                         print(f"[server-only log] PipelineError (research_followup): {error}")
@@ -787,7 +853,7 @@ def handle_followup_input(idx: int, followup_question: str) -> None:
         with st.spinner("جارٍ البحث عن إجابة..."):
             result = answer_followup(
                 entry["question"], entry["stages"], followup_question,
-                backend.make_followup_answerer(current_plan()),
+                with_profile_context(backend.make_followup_answerer(current_plan())),
             )
     except PipelineError as error:
         print(f"[server-only log] PipelineError (followup): {error}")
@@ -981,7 +1047,7 @@ def run_new_search(question: str) -> None:
                 query_generator=backend.generate_queries,
                 relevance_classifier=backend.make_relevance_classifier(plan),
                 extractor=backend.extract_findings,
-                synthesizer=backend.make_synthesizer(plan),
+                synthesizer=with_profile_context(backend.make_synthesizer(plan)),
                 progress=on_progress,
             )
         except ModelClientError as error:

@@ -19,6 +19,8 @@ Each account document:
         "plan": str,                               # "normal" | "pro" | "max" -- see run_assistant.PLAN_MODELS
         "session_token": str,                      # current "remember me" token, or "" once logged out
         "session_token_created_at": datetime,      # for expiring old tokens
+        "field_of_study": str,                     # optional, self-reported, blank by default
+        "academic_level": str,                     # optional, one of ACADEMIC_LEVELS, blank by default
     }
 
 A "subscribed" account (see grant_subscription/is_subscribed below) gets a
@@ -56,6 +58,13 @@ SESSION_TOKEN_MAX_AGE_DAYS = 30
 # auth.py free of any model-calling dependency -- it only needs to validate
 # and store the plan name, not know which real models each one maps to.
 PLANS = ("normal", "pro", "max")
+
+# Self-reported profile, used to gently steer tone/vocabulary in the AI's
+# own interpretive writing (never to change which real evidence is found or
+# what it says) -- see app.py's profile_context_note(). Same for every
+# account regardless of plan; it's just two text fields, no extra model
+# cost, so there's no reason to gate it.
+ACADEMIC_LEVELS = ("عام", "بكالوريوس", "ماجستير", "دكتوراه")
 
 # Generous but finite -- like a real paid plan's usage cap, not literally
 # unlimited. Priced (see ROADMAP.md) so each tier stays profitable at
@@ -152,6 +161,19 @@ def clear_session_token(email: str) -> None:
     """Invalidates the account's "remember me" token (e.g. on logout)."""
     email = email.strip().lower()
     _accounts().document(email).set({"session_token": ""}, merge=True)
+
+
+def update_profile(email: str, field_of_study: str, academic_level: str) -> None:
+    """Saves the account's self-reported profile (field of study, academic
+    level). Both optional -- pass "" to clear either one. academic_level
+    must be "" or one of ACADEMIC_LEVELS."""
+    if academic_level and academic_level not in ACADEMIC_LEVELS:
+        raise AuthError(f"مستوى أكاديمي غير معروف: {academic_level}")
+    email = email.strip().lower()
+    _accounts().document(email).set({
+        "field_of_study": field_of_study.strip(),
+        "academic_level": academic_level,
+    }, merge=True)
 
 
 def increment_used(email: str) -> None:
