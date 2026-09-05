@@ -606,9 +606,20 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap');
     .stApp { direction: rtl; text-align: right; font-family: 'IBM Plex Sans Arabic', sans-serif; }
     .stTextArea textarea { direction: rtl; text-align: right; font-size: 1.05rem; padding: 0.9rem; }
-    .stButton button { direction: rtl; }
+    .stButton button { direction: rtl; transition: transform 0.15s ease-out; }
+    .stButton button:active { transform: scale(0.97); }
     h1 { margin-bottom: 0.2rem; }
     .app-subtitle { color: var(--text-color-secondary, #666); line-height: 1.8; margin-bottom: 1.6rem; }
+    /* Typography rhythm -- Arabic reads better with more generous line-height
+       than Latin text, and section hierarchy needed more than Streamlit's
+       flat default header spacing to feel like distinct result sections
+       (الدراسات المسترجعة / نتائج الدراسات / مواضع الاختلاف / etc.) rather
+       than one run-on block. */
+    .stMarkdown p, .stMarkdown li { line-height: 1.75; }
+    h2 { margin-top: 2.2rem; margin-bottom: 0.6rem; font-weight: 700; }
+    h2:first-of-type { margin-top: 0; }
+    .stMarkdown ul { margin-bottom: 1rem; }
+    .stMarkdown li { margin-bottom: 0.5rem; }
     /* The RTL direction above breaks the sidebar's own width calculation
        (it collapses to a sliver, wrapping Arabic text one letter per line)
        unless a fixed width is forced here. min(300px, 85vw) instead of a
