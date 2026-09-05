@@ -21,6 +21,8 @@ Each account document:
         "session_token_created_at": datetime,      # for expiring old tokens
         "field_of_study": str,                     # optional, self-reported, blank by default
         "academic_level": str,                     # optional, one of ACADEMIC_LEVELS, blank by default
+        "tone": str,                                # optional, one of TONE_OPTIONS, blank by default
+        "custom_instructions": str,                 # optional free text, blank by default
     }
 
 A "subscribed" account (see grant_subscription/is_subscribed below) gets a
@@ -65,6 +67,9 @@ PLANS = ("normal", "pro", "max")
 # account regardless of plan; it's just two text fields, no extra model
 # cost, so there's no reason to gate it.
 ACADEMIC_LEVELS = ("عام", "بكالوريوس", "ماجستير", "دكتوراه")
+TONE_OPTIONS = ("افتراضي", "رسمي", "مبسّط ومباشر", "مفصّل وعميق")
+
+CUSTOM_INSTRUCTIONS_MAX_LEN = 500  # a short note, not a second essay
 
 # Generous but finite -- like a real paid plan's usage cap, not literally
 # unlimited. Priced (see ROADMAP.md) so each tier stays profitable at
@@ -163,16 +168,28 @@ def clear_session_token(email: str) -> None:
     _accounts().document(email).set({"session_token": ""}, merge=True)
 
 
-def update_profile(email: str, field_of_study: str, academic_level: str) -> None:
+def update_profile(
+    email: str, field_of_study: str, academic_level: str,
+    tone: str = "", custom_instructions: str = "",
+) -> None:
     """Saves the account's self-reported profile (field of study, academic
-    level). Both optional -- pass "" to clear either one. academic_level
-    must be "" or one of ACADEMIC_LEVELS."""
+    level, preferred tone, free-text custom instructions). All optional --
+    pass "" to clear any of them. academic_level must be "" or one of
+    ACADEMIC_LEVELS; tone must be "" or one of TONE_OPTIONS;
+    custom_instructions is capped at CUSTOM_INSTRUCTIONS_MAX_LEN."""
     if academic_level and academic_level not in ACADEMIC_LEVELS:
         raise AuthError(f"مستوى أكاديمي غير معروف: {academic_level}")
+    if tone and tone not in TONE_OPTIONS:
+        raise AuthError(f"أسلوب غير معروف: {tone}")
+    custom_instructions = custom_instructions.strip()
+    if len(custom_instructions) > CUSTOM_INSTRUCTIONS_MAX_LEN:
+        raise AuthError(f"التعليمات طويلة جداً (الحد الأقصى {CUSTOM_INSTRUCTIONS_MAX_LEN} حرفاً).")
     email = email.strip().lower()
     _accounts().document(email).set({
         "field_of_study": field_of_study.strip(),
         "academic_level": academic_level,
+        "tone": tone,
+        "custom_instructions": custom_instructions,
     }, merge=True)
 
 
