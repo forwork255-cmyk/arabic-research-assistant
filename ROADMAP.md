@@ -28,7 +28,7 @@ The original plan had **14 items**. 9 were already recorded below; the other 5 w
 1. Real database (Firebase) → done, see Phase 1
 2. Real accounts (auth) → done, see Phase 1
 3. Redesign to real chat (architecture) → done, see Phase 2
-4. **General Q&A (loosen rules)** → **not started** (recovered item, see Phase 3/4)
+4. **General Q&A (loosen rules)** → **done 2026-09-05** (recovered item, see Phase 3/4)
 5. Real web search integration → done (OpenAlex search pipeline)
 6. **Free-form writing ability** → **not started** (recovered item, see Phase 3/4)
 7. Real payments (Stripe) → attempted, abandoned for Iraq-incompatibility, replaced by the Wayl item above
@@ -71,7 +71,7 @@ No more gap -- every original item is now accounted for, either done or explicit
 
 ### Recovered original items, not yet started (2026-09-05)
 
-- [ ] **General Q&A (loosen rules)** (original item #4) — the app currently only accepts genuine academic research questions (moderation rejects anything else, including a general "loosen it up" style Q&A). Not started -- would need a real product decision first: should this become a second mode alongside research search, or replace the strict gate entirely? Worth discussing before coding anything.
+- [x] **General Q&A (loosen rules)** (original item #4) — decided as a second mode, not a loosened gate: replacing the strict gate would have fed non-research questions into a pipeline built entirely around "search real papers, cite them," with nothing to search or cite. Added `moderation.format_question_classification_prompt()`/`QUESTION_CLASSIFICATION_JSON_SCHEMA` routing a new question into research (existing pipeline, unchanged) / general (new lightweight path) / unsafe (rejected, as before); `general_qa.py` for the general-answer prompt (still forbidden from inventing fake studies/statistics); `run_assistant.classify_question_type()`/`answer_general_question()`; `app.py`'s `classify_question_type()` wrapper (fails open to "research" on any error, same philosophy as the existing moderation check) and `run_general_qa()`/`render_general_answer()`. General answers are clearly labeled as not sourced research, use the same cost accounting as everything else, and don't support follow-ups yet (same conservative first-pass scope paper analysis originally shipped with). Verified without real API cost (schema/prompt/validator tested directly, model routing confirmed via mocked calls). **Not yet live-verified with a real question.**
 - [ ] **Free-form writing ability** (original item #6) — some kind of open-ended writing help beyond the structured research-synthesis pipeline (e.g. help drafting a section of a paper in the user's own words). Not started, scope not yet defined.
 - [ ] **Memory/personalization** (original item #11) — no personalization currently exists; every search is independent of past ones beyond the visible history list. Not started, scope not yet defined (e.g. remembering a user's field of study, preferred citation style, or past topics to inform future searches).
 
