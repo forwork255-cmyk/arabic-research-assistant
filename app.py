@@ -434,10 +434,7 @@ def searches_caption() -> str:
         return f"اشتراكك فعّال حتى {until} — خطة {plan} — {left} عملية بحث متبقية لهذه الفترة."
     left = auth.free_searches_remaining(account) if account else 0
     if left > 0:
-        return (
-            f"🆓 الحساب المجاني: {left} من {auth.FREE_DAILY_SEARCH_LIMIT} عمليات بحث متبقية اليوم "
-            "(يتجدد كل 24 ساعة، ويعتمد على نموذج أسرع لتوفير التكلفة)."
-        )
+        return f"🆓 الحساب المجاني: {left} من {auth.FREE_DAILY_SEARCH_LIMIT} عمليات بحث متبقية اليوم (يتجدد كل 24 ساعة)."
     hours_left = auth.free_reset_hours_remaining(account) if account else 0
     return f"🆓 استنفدت عمليات البحث المجانية لهذا اليوم — تتجدد خلال {hours_left:.1f} ساعة تقريباً."
 
