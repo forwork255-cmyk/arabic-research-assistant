@@ -58,16 +58,17 @@ SESSION_TOKEN_MAX_AGE_DAYS = 30
 PLANS = ("normal", "pro", "max")
 
 # Generous but finite -- like a real paid plan's usage cap, not literally
-# unlimited. Flat 100 across every tier for marketing (a smaller "max" cap
-# reads as less appealing than "normal"), even though "max" costs more per
-# search (Opus vs Sonnet) -- accepted trade-off: most subscribers won't use
-# the full allowance, and global_limit.py's site-wide cap is the backstop
-# if that assumption turns out wrong. Easy to lower per-plan later once
-# real usage data exists (see ROADMAP.md).
+# unlimited. Priced (see ROADMAP.md) so each tier stays profitable at
+# *typical* usage; a subscriber using every single search in the period
+# would cost more than normal/pro's price (a deliberate bet, backed by
+# real precedent -- Perplexity's own published usage patterns -- that most
+# subscribers never get near a generous cap), with global_limit.py's
+# site-wide cap as the backstop if that bet is wrong. Easy to adjust
+# per-plan later once real usage data exists.
 SUBSCRIPTION_SEARCH_LIMITS = {
-    "normal": 100,
-    "pro": 100,
-    "max": 100,
+    "normal": 40,
+    "pro": 30,
+    "max": 20,
 }
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
