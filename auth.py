@@ -11,8 +11,8 @@ password cannot be recovered from it.
 Each account document:
     {
         "password_hash": bytes,
-        "search_limit": int,   # total FREE-tier searches this account may ever use
-        "used": int,           # free-tier searches used so far
+        "free_used": int,                          # free-tier searches used in the current 24h window
+        "free_window_start": datetime | None,       # when that window started; None = never used yet
         "subscribed_until": datetime | None,       # manually granted paid access
         "subscription_search_limit": int,          # searches allowed for the CURRENT paid period
         "subscription_used": int,                  # searches used in the current paid period
@@ -45,7 +45,14 @@ from firebase_admin import firestore
 
 from db import _get_client
 
-DEFAULT_SEARCH_LIMIT = 5
+# Free (unsubscribed) tier: a small, recurring daily allowance, not a
+# one-time lifetime trial -- gives a repeatable taste of the app instead of
+# a single moment that's either converted or gone forever, matching how
+# real comparable products (e.g. Perplexity's free tier) actually do this.
+# Paired with a cheaper model (see run_assistant.PLAN_MODELS["free"]) so
+# this stays affordable to give away indefinitely, not just during a trial.
+FREE_DAILY_SEARCH_LIMIT = 5
+FREE_DAILY_WINDOW = timedelta(hours=24)
 
 # "Remember me" across browser refreshes: a random opaque token is stored on
 # the account and also placed in the page URL (?t=...), so app.py can
@@ -110,8 +117,6 @@ def create_account(email: str, password: str) -> None:
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
     doc_ref.set({
         "password_hash": password_hash,
-        "search_limit": DEFAULT_SEARCH_LIMIT,
-        "used": 0,
     })
 
 
@@ -193,9 +198,41 @@ def update_profile(
     }, merge=True)
 
 
-def increment_used(email: str) -> None:
+def _free_window_state(account: dict) -> tuple:
+    """Returns (used, window_start) for the account's free-tier daily
+    allowance, resetting to (0, now) if the 24h window has elapsed or never
+    started. Read-only -- does not write to Firestore; increment_free_used()
+    below writes the possibly-reset state back."""
+    now = datetime.now(timezone.utc)
+    window_start = account.get("free_window_start")
+    used = account.get("free_used", 0)
+    if window_start is None or now - window_start >= FREE_DAILY_WINDOW:
+        return 0, now
+    return used, window_start
+
+
+def free_searches_remaining(account: dict) -> int:
+    used, _ = _free_window_state(account)
+    return max(0, FREE_DAILY_SEARCH_LIMIT - used)
+
+
+def free_reset_hours_remaining(account: dict) -> float:
+    """Hours until the free-tier allowance next resets. 0 if it already has
+    (or never started -- nothing to wait for)."""
+    _, window_start = _free_window_state(account)
+    elapsed = datetime.now(timezone.utc) - window_start
+    remaining = FREE_DAILY_WINDOW - elapsed
+    return max(0.0, remaining.total_seconds() / 3600)
+
+
+def increment_free_used(email: str) -> None:
     email = email.strip().lower()
-    _accounts().document(email).set({"used": firestore.Increment(1)}, merge=True)
+    account = get_account(email) or {}
+    used, window_start = _free_window_state(account)
+    _accounts().document(email).set({
+        "free_used": used + 1,
+        "free_window_start": window_start,
+    }, merge=True)
 
 
 def increment_subscription_used(email: str) -> None:

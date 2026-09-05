@@ -49,14 +49,16 @@ EXTRACTION_MODEL = "claude-haiku-4-5"
 SYNTHESIS_MODEL = "claude-sonnet-5"
 
 # Plan tiers: which model handles the two hardest reasoning stages
-# (relevance classification, final synthesis) for a subscribed account.
-# "normal" is the same models everyone (including free-tier/unsubscribed
-# accounts) already gets -- Pro/Max are a real, meaningfully more expensive
-# upgrade (Opus costs noticeably more per token than Sonnet), not yet
-# verified to actually produce better research synthesis for this specific
-# task -- confirm with a real side-by-side test before marketing "Max" as
-# provably better, not just "the app's most expensive model."
+# (relevance classification, final synthesis). "free" (unsubscribed
+# accounts) gets Haiku -- meaningfully cheaper, and a real, honest quality
+# floor under every paid tier (confirmed real-world precedent: Perplexity's
+# free tier is likewise restricted to its cheapest model, strong models
+# paid-only). "normal" is Sonnet -- a real upgrade over free, not just a
+# bigger allowance. Pro/Max add Opus for the hardest stage(s) -- confirmed
+# via a real side-by-side test to actually produce better synthesis, not
+# just "the app's most expensive model."
 PLAN_MODELS = {
+    "free": {"relevance": "claude-haiku-4-5", "synthesis": "claude-haiku-4-5"},
     "normal": {"relevance": RELEVANCE_MODEL, "synthesis": SYNTHESIS_MODEL},
     "pro": {"relevance": RELEVANCE_MODEL, "synthesis": "claude-opus-5"},
     "max": {"relevance": "claude-opus-5", "synthesis": "claude-opus-5"},

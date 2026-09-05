@@ -291,14 +291,21 @@ def is_owner() -> bool:
 
 def current_plan() -> str:
     """Which model tier the logged-in account's searches should use. Only a
-    subscribed account's own plan affects model choice -- a free-tier account
-    (or a subscription that expired) always gets "normal", regardless of any
-    leftover "plan" value on the account. Used for every real model call the
-    user can trigger (new search, expand, follow-up, research-escalation),
+    subscribed account's own plan affects model choice -- a subscription
+    that expired falls back to "free" like any other unsubscribed account,
+    regardless of any leftover "plan" value on the account. The owner is an
+    exception: real "free" (Haiku) quality would be a regression from what
+    they're used to testing with, so an owner who hasn't self-subscribed
+    still gets "normal" (Sonnet), not "free" -- they explicitly declined
+    auto-upgrading to "max" earlier, so this mirrors that same choice at
+    the other end of the scale. Used for every real model call the user can
+    trigger (new search, expand, follow-up, research-escalation, draft),
     not just the main search -- a "max" subscriber should get max-quality
     answers throughout the whole conversation, not just the first message."""
     account = auth.get_account(st.session_state["user_email"])
-    return account.get("plan", "normal") if account and auth.is_subscribed(account) else "normal"
+    if account and auth.is_subscribed(account):
+        return account.get("plan", "normal")
+    return "normal" if is_owner() else "free"
 
 
 _TONE_INSTRUCTIONS = {
@@ -372,6 +379,10 @@ def remaining_searches() -> int:
     allowance (auth.SUBSCRIPTION_SEARCH_LIMITS[plan] per paid period) -- like
     a real paid plan, not literally unlimited, so no single subscriber can
     exhaust the whole site's budget alone.
+
+    An unsubscribed account gets a small allowance (auth.FREE_DAILY_SEARCH_LIMIT)
+    that recurs every 24h, not a one-time lifetime trial -- see
+    auth.free_searches_remaining().
     """
     if global_limit.global_limit_reached():
         return 0
@@ -382,7 +393,7 @@ def remaining_searches() -> int:
         return 0
     if auth.is_subscribed(account):
         return auth.subscription_searches_remaining(account)
-    return max(0, account["search_limit"] - account["used"])
+    return auth.free_searches_remaining(account)
 
 
 def record_search_used() -> None:
@@ -390,19 +401,29 @@ def record_search_used() -> None:
     if account and auth.is_subscribed(account):
         auth.increment_subscription_used(st.session_state["user_email"])
     else:
-        auth.increment_used(st.session_state["user_email"])
+        auth.increment_free_used(st.session_state["user_email"])
     global_limit.increment_global_used()
 
 
 def no_searches_left_message() -> str:
     if global_limit.global_limit_reached():
         return "بلغ التطبيق الحد الأقصى المؤقت لعدد عمليات البحث. يرجى المحاولة لاحقاً."
+    account = auth.get_account(st.session_state["user_email"])
+    if account and not auth.is_subscribed(account) and not is_owner():
+        hours_left = auth.free_reset_hours_remaining(account)
+        return (
+            f"استنفدت عمليات البحث المجانية لهذا اليوم ({auth.FREE_DAILY_SEARCH_LIMIT} يومياً). "
+            f"تتجدد خلال {hours_left:.1f} ساعة تقريباً، أو يمكنك الاشتراك للحصول على المزيد."
+        )
     return "لقد استنفدت عدد عمليات البحث المسموح بها لحسابك."
 
 
 def searches_caption() -> str:
     """What to show near the chat input: owner/subscription status if
-    applicable, otherwise the remaining-searches count."""
+    applicable, otherwise the free-tier daily allowance -- explicitly
+    naming the count, the daily limit, and (once exhausted) the reset
+    timing, so the free tier's shape is stated plainly rather than left
+    for the user to guess at."""
     if is_owner():
         return "أنت المالك — وصول غير محدود (يبقى محمياً بحد الأمان العام للتطبيق)."
     account = auth.get_account(st.session_state["user_email"])
@@ -411,7 +432,14 @@ def searches_caption() -> str:
         left = auth.subscription_searches_remaining(account)
         plan = account.get("plan", "normal")
         return f"اشتراكك فعّال حتى {until} — خطة {plan} — {left} عملية بحث متبقية لهذه الفترة."
-    return f"عمليات البحث المتبقية لحسابك: {remaining_searches()}"
+    left = auth.free_searches_remaining(account) if account else 0
+    if left > 0:
+        return (
+            f"🆓 الحساب المجاني: {left} من {auth.FREE_DAILY_SEARCH_LIMIT} عمليات بحث متبقية اليوم "
+            "(يتجدد كل 24 ساعة، ويعتمد على نموذج أسرع لتوفير التكلفة)."
+        )
+    hours_left = auth.free_reset_hours_remaining(account) if account else 0
+    return f"🆓 استنفدت عمليات البحث المجانية لهذا اليوم — تتجدد خلال {hours_left:.1f} ساعة تقريباً."
 
 
 def is_question_appropriate(question: str, prompt_builder=moderation.format_moderation_prompt) -> tuple:
