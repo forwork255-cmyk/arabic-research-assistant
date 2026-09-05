@@ -630,13 +630,13 @@ st.markdown(
     .stMarkdown li { margin-bottom: 0.5rem; }
     /* The RTL direction above breaks the sidebar's own width calculation
        (it collapses to a sliver, wrapping Arabic text one letter per line)
-       unless a fixed width is forced here. min(300px, 85vw) instead of a
+       unless a fixed width is forced here. min(300px, 75vw) instead of a
        flat 300px -- a narrow phone screen (e.g. 375px wide) was otherwise
        forced to the same 300px, eating most of the screen; this caps it to
        85% of whatever width is actually available, while staying exactly
        300px on any normal desktop/tablet width. */
-    section[data-testid="stSidebar"] { min-width: min(300px, 85vw) !important; width: min(300px, 85vw) !important; }
-    section[data-testid="stSidebar"] > div { width: min(300px, 85vw) !important; direction: rtl; text-align: right; }
+    section[data-testid="stSidebar"] { min-width: min(300px, 75vw) !important; width: min(300px, 75vw) !important; }
+    section[data-testid="stSidebar"] > div { width: min(300px, 75vw) !important; direction: rtl; text-align: right; }
     /* Streamlit collapses the sidebar with a hardcoded translateX(-300px)
        (assumes a left-side, LTR sidebar). In this RTL layout the sidebar
        sits on the right, so sliding it further left shoves it into the
@@ -644,10 +644,10 @@ st.markdown(
        gap and a collapse toggle that appears to jump between positions.
        Overriding to the opposite direction sends it fully off-screen to
        the right instead, confirmed live in the browser (both collapse and
-       reopen) before this was written here. Uses the same min(300px, 85vw)
+       reopen) before this was written here. Uses the same min(300px, 75vw)
        expression as the width above so it always slides exactly the
        sidebar's own current width off-screen, on any screen size. */
-    section[data-testid="stSidebar"][aria-expanded="false"] { transform: translateX(min(300px, 85vw)) !important; }
+    section[data-testid="stSidebar"][aria-expanded="false"] { transform: translateX(min(300px, 75vw)) !important; }
     </style>
     """,
     unsafe_allow_html=True,
