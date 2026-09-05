@@ -18,6 +18,7 @@ Run with: streamlit run app.py
 
 import base64
 import os
+import re
 
 import streamlit as st
 import sentry_sdk
@@ -422,6 +423,46 @@ def format_source_links(paper_ids: list, sources: list) -> str:
     return "، ".join(links)
 
 
+def numbered_draft_citations(draft_text: str, supporting_paper_ids: list, sources: list) -> tuple:
+    """Replaces raw internal paper-id markers like "(W123456)" in a drafted
+    paragraph's prose with a numbered inline citation "(1)", "(2)", ... in
+    order of first appearance, matching a numbered source list -- a raw
+    OpenAlex ID means nothing to a reader (the model was only ever asked to
+    cite that way so Python could do exactly this conversion afterward).
+    Returns (transformed_text, ordered_paper_ids)."""
+    order = []
+    seen = {}
+
+    def repl(match: re.Match) -> str:
+        pid = match.group(1)
+        if pid not in seen:
+            seen[pid] = len(order) + 1
+            order.append(pid)
+        return f"({seen[pid]})"
+
+    if not supporting_paper_ids:
+        return draft_text, []
+    pattern = "|".join(re.escape(pid) for pid in supporting_paper_ids)
+    transformed = re.sub(rf"\(({pattern})\)", repl, draft_text)
+    return transformed, order
+
+
+def format_numbered_source_list(paper_ids: list, sources: list) -> str:
+    """Same lookup as format_source_links(), but numbered (1., 2., ...) to
+    match numbered_draft_citations()'s inline (1), (2), ... markers."""
+    sources_by_short_id = {short_id(s["openalex_id"]): s for s in sources}
+    lines = []
+    for i, pid in enumerate(paper_ids, start=1):
+        source = sources_by_short_id.get(pid)
+        if source and source.get("url"):
+            lines.append(f"{i}. [{source['title']}]({source['url']})")
+        elif source:
+            lines.append(f"{i}. {source['title']}")
+        else:
+            lines.append(f"{i}. {pid}")
+    return "  \n".join(lines)
+
+
 def build_report_text(question: str, stages: dict) -> str:
     """
     Plain-text version of the same result shown on screen, for the download
@@ -651,9 +692,11 @@ def render_draft_section(idx: int) -> None:
     if draft:
         st.divider()
         st.subheader("✍️ فقرة أكاديمية مقترحة")
-        st.write(draft["draft"])
-        if draft["supporting_paper_ids"]:
-            st.caption("المصادر: " + format_source_links(draft["supporting_paper_ids"], entry["stages"]["synthesis"]["sources"]))
+        sources = entry["stages"]["synthesis"]["sources"]
+        transformed_text, ordered_ids = numbered_draft_citations(draft["draft"], draft["supporting_paper_ids"], sources)
+        st.write(transformed_text)
+        if ordered_ids:
+            st.caption("المصادر:  \n" + format_numbered_source_list(ordered_ids, sources))
         render_token_usage(draft.get("token_usage"))
 
     label = "🔄 إعادة الصياغة" if draft else "✍️ صياغة فقرة أكاديمية باستخدام هذه النتائج"
