@@ -21,21 +21,40 @@ Other good zero/low-cost things to do in the meantime:
 
 Once Wayl replies: build the checkout-link + webhook integration (see the Wayl item under Phase 3/4 below for what's already known), test in sandbox mode first, then go live.
 
-## Note on completeness
+## Note on completeness (resolved 2026-09-05)
 
-The original plan had **14 items across 4 phases**. Only **9 are recorded below** (6 done, 3 identified but not started) — the other 5 were lost when conversation history was compacted before this file existed, and are not reconstructed here to avoid inventing items that weren't actually part of the original plan. Before starting Phase 3/4 work, it's worth a short session to re-derive what else belongs on this list.
+The original plan had **14 items**. 9 were already recorded below; the other 5 were lost to an early compaction, before this file existed. **User recovered the original list from a saved document (`New DOCX Document.docx`) and it's now fully reconciled:**
+
+1. Real database (Firebase) → done, see Phase 1
+2. Real accounts (auth) → done, see Phase 1
+3. Redesign to real chat (architecture) → done, see Phase 2
+4. **General Q&A (loosen rules)** → **not started** (recovered item, see Phase 3/4)
+5. Real web search integration → done (OpenAlex search pipeline)
+6. **Free-form writing ability** → **not started** (recovered item, see Phase 3/4)
+7. Real payments (Stripe) → attempted, abandoned for Iraq-incompatibility, replaced by the Wayl item above
+8. **Production hosting migration** → done in practice (deployed on Streamlit Community Cloud) but never explicitly checked off under its original name -- now recorded in Phase 1
+9. Real rate-limiting on accounts → done (`auth.py`'s per-account limits + `global_limit.py`'s site-wide cap)
+10. **Real chat UI polish** → done in practice (chat redesign, sidebar, delete/star, RTL styling) but never explicitly checked off under its original name -- now recorded in Phase 2
+11. **Memory/personalization** → **not started** (recovered item, see Phase 3/4)
+12. Content moderation → done, see Phase 2
+13. Error monitoring (Sentry) → done, see Phase 3/4
+14. Legal docs (privacy/terms) → done (draft), see Phase 3/4
+
+No more gap -- every original item is now accounted for, either done or explicitly tracked as not-started below.
 
 ## Phase 1 — Foundation (done)
 
 - [x] Real database (Firestore) — replaced in-memory usage tracking
 - [x] Real user accounts — email/password sign-up & login (bcrypt), replaced shared access codes
 - [x] Persistent per-account search history — follows the account across devices/sessions
+- [x] Production hosting migration (original item #8, recovered) — deployed and live on Streamlit Community Cloud
 
 ## Phase 2 — Core UX & safety (done)
 
 - [x] Conversational chat redesign — native chat bubbles/input instead of a static report form
 - [x] Site-wide safety cap — emergency stop on total real searches (protects the API budget)
 - [x] Content moderation — blocks harmful/off-topic/jailbreak questions before they reach the real pipeline
+- [x] Real chat UI polish (original item #10, recovered) — covered by the chat redesign above plus everything since (sidebar, delete/star, RTL styling)
 
 ## Phase 3/4 — Identified
 
@@ -49,6 +68,12 @@ The original plan had **14 items across 4 phases**. Only **9 are recorded below*
 - [x] **Single-paper upload + analysis** — new capability, not on the original 9-item list: user attaches a PDF via the chat input (native Claude document content block, not our own text extraction), gets either a structured summary or a grounded answer to a specific question about that one paper. New files: `paper_analysis.py` (prompt + `MAX_PDF_BYTES = 15MB` guard), `model_client.call_model_with_document()`, `run_assistant.analyze_paper()`. Different from the existing multi-paper OpenAlex-abstract-search flow. `CLAUDE.md` previously excluded "PDF processing"; superseded by the full-assistant pivot. Verified live with a real PDF (real cost). One real bug found and fixed live: moderation was judging a short caption like "لخص" against the "is this a freestanding research question" bar and wrongly rejecting it -- fixed with a paper-aware moderation prompt (`moderation.format_paper_question_moderation_prompt`).
 - [~] **Paper follow-up questions** — user reported no way to ask more questions after a paper upload (the loop that search results already have was missing for papers). Added `paper_analysis.format_paper_followup_prompt()`, `app.py`'s `handle_paper_followup_input()`/`render_paper_followup_thread()`. PDF is cached in `st.session_state` only (not Firestore -- 15MB file would exceed its 1MB document limit), so follow-ups only work while the file is still cached from the original upload in that session; a reload shows a clear "re-upload to ask more" message instead of crashing. Each follow-up re-sends the full PDF, so it costs the same as a fresh paper analysis. Committed (`b26b288`), code done but **live-verification intentionally deferred by user** (2026-09-05) -- not urgent right now, revisit later.
 - [x] **Delete / star search history** — sidebar entries had no way to remove or pin a past search. Added `history.delete_entry()`/`history.set_starred()`, sidebar now shows a star toggle (pins to a "المفضلة" section at the top) and a delete button (two-click confirm, permanent). No model cost -- pure Firestore + UI. Committed (`0b0bf3f`), **live-verified working** (2026-09-05).
+
+### Recovered original items, not yet started (2026-09-05)
+
+- [ ] **General Q&A (loosen rules)** (original item #4) — the app currently only accepts genuine academic research questions (moderation rejects anything else, including a general "loosen it up" style Q&A). Not started -- would need a real product decision first: should this become a second mode alongside research search, or replace the strict gate entirely? Worth discussing before coding anything.
+- [ ] **Free-form writing ability** (original item #6) — some kind of open-ended writing help beyond the structured research-synthesis pipeline (e.g. help drafting a section of a paper in the user's own words). Not started, scope not yet defined.
+- [ ] **Memory/personalization** (original item #11) — no personalization currently exists; every search is independent of past ones beyond the visible history list. Not started, scope not yet defined (e.g. remembering a user's field of study, preferred citation style, or past topics to inform future searches).
 
 ## Output quality
 
