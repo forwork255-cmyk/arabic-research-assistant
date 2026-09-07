@@ -989,7 +989,7 @@ def render_draft_section(idx: int) -> None:
         plan = current_plan()
         try:
             with st.spinner("جارٍ صياغة الفقرة..."):
-                new_draft = draft_writing(entry["question"], entry["stages"], with_profile_context(backend.make_drafter(plan)))
+                new_draft = draft_writing(entry["question"], entry["stages"], with_profile_context(backend.make_drafter(plan)), plan=plan)
         except PipelineError as error:
             print(f"[server-only log] PipelineError (draft): {error}")
             sentry_sdk.capture_exception(error)
@@ -1032,6 +1032,7 @@ def render_followup_thread(idx: int) -> None:
                                 entry["question"], entry["stages"], fu["question"],
                                 backend.generate_queries, backend.make_relevance_classifier(plan),
                                 backend.extract_findings, with_profile_context(backend.make_followup_answerer(plan)),
+                                plan=plan,
                             )
                     except PipelineError as error:
                         print(f"[server-only log] PipelineError (research_followup): {error}")
@@ -1065,11 +1066,13 @@ def handle_followup_input(idx: int, followup_question: str) -> None:
         return
     record_search_used()
     backend.TOKEN_USAGE_LOG.clear()
+    plan = current_plan()
     try:
         with st.spinner("جارٍ البحث عن إجابة..."):
             result = answer_followup(
                 entry["question"], entry["stages"], followup_question,
-                with_profile_context(backend.make_followup_answerer(current_plan())),
+                with_profile_context(backend.make_followup_answerer(plan)),
+                plan=plan,
             )
     except PipelineError as error:
         print(f"[server-only log] PipelineError (followup): {error}")

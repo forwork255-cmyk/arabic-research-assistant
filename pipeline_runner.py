@@ -18,6 +18,13 @@ Nothing here duplicates that logic.
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+# Per-plan target length for follow-up answers and drafts -- paid tiers get
+# a genuinely more thorough response, not just a "better" model label with
+# the same short output. Free tier keeps the original short/default range
+# (kept cheap on Haiku); normal/pro/max were explicitly decided 2026-09-07.
+FOLLOWUP_WORD_TARGETS = {"free": "120-150", "normal": "220", "pro": "270", "max": "350"}
+DRAFT_WORD_TARGETS = {"free": "200-300", "normal": "250", "pro": "320", "max": "360"}
+
 from search_pipeline import search_multiple_queries
 from relevance_filter import build_relevance_report, validate_relevance_output
 from synthesis import (
@@ -232,13 +239,17 @@ def run_final_synthesis(question: str, extraction_findings: list, selected_paper
     return combine_synthesis_stages(question, extraction_findings, final_synthesis_output, selected_papers)
 
 
-def format_followup_prompt(followup_input: dict) -> str:
+def format_followup_prompt(followup_input: dict, plan: str = "normal") -> str:
     """
     Programmatically build a follow-up-question prompt. Answers a NEW
     question using ONLY the already-extracted findings from a completed
-    search -- no new papers, no new retrieval, no original abstracts. Kept
-    to a single short answer, not a full report.
+    search -- no new papers, no new retrieval, no original abstracts.
+
+    plan controls the requested answer length via FOLLOWUP_WORD_TARGETS --
+    a paid tier gets a genuinely more thorough answer, not just a "better"
+    model label with the same short output.
     """
+    word_target = FOLLOWUP_WORD_TARGETS.get(plan, FOLLOWUP_WORD_TARGETS["normal"])
     return (
         "Below is a research question, a short list of already-extracted findings "
         "(each grounded in one source paper), and a NEW follow-up question. Using ONLY "
@@ -258,7 +269,7 @@ def format_followup_prompt(followup_input: dict) -> str:
         "insufficient, or you had to say 'not enough information' in the answer -- do not set it "
         "true just because you wrote a polite-sounding answer.\n\n"
         "OUTPUT LIMITS:\n"
-        "- answer: approximately 120-150 Arabic words, no introduction or framing sentences.\n"
+        f"- answer: approximately {word_target} Arabic words, no introduction or framing sentences.\n"
         "- supporting_paper_ids: only paper_id values that appear in the findings below.\n\n"
         f"INPUT (JSON):\n{json.dumps(followup_input, ensure_ascii=False, indent=2)}\n\n"
         "Write the answer in Arabic."
@@ -278,7 +289,7 @@ def _extraction_findings_from_stages(stages: dict) -> list:
     ]
 
 
-def answer_followup(question: str, stages: dict, follow_up_question: str, followup_answerer) -> dict:
+def answer_followup(question: str, stages: dict, follow_up_question: str, followup_answerer, plan: str = "normal") -> dict:
     """
     Answer a follow-up question using ONLY the findings already extracted in
     a completed run -- no new API calls beyond this one. Returns
@@ -287,7 +298,7 @@ def answer_followup(question: str, stages: dict, follow_up_question: str, follow
     """
     extraction_findings = _extraction_findings_from_stages(stages)
     followup_input = build_followup_input(question, extraction_findings, follow_up_question)
-    followup_prompt = format_followup_prompt(followup_input)
+    followup_prompt = format_followup_prompt(followup_input, plan)
 
     followup_raw = followup_answerer(followup_prompt)
     followup_output = followup_raw if isinstance(followup_raw, dict) else parse_strict_json(followup_raw)
@@ -302,13 +313,17 @@ def answer_followup(question: str, stages: dict, follow_up_question: str, follow
     return followup_output
 
 
-def format_draft_prompt(draft_input: dict) -> str:
+def format_draft_prompt(draft_input: dict, plan: str = "normal") -> str:
     """
     Programmatically build a draft-writing prompt. Writes ONE free-form
     academic paragraph (not the app's fixed research-report template) using
     ONLY the already-extracted findings from a completed search -- no new
     papers, no new retrieval, no original abstracts, no outside knowledge.
+
+    plan controls the requested paragraph length via DRAFT_WORD_TARGETS --
+    same reasoning as format_followup_prompt().
     """
+    word_target = DRAFT_WORD_TARGETS.get(plan, DRAFT_WORD_TARGETS["normal"])
     return (
         "Below is a research question and a short list of already-extracted findings "
         "(each grounded in one source paper). Write ONE well-structured academic-style "
@@ -325,7 +340,7 @@ def format_draft_prompt(draft_input: dict) -> str:
         "e.g. \"(W123456)\" -- exactly as given below, so it can be turned into a real source link "
         "afterward.\n\n"
         "OUTPUT LIMITS:\n"
-        "- draft: one paragraph, approximately 200-300 Arabic words, no introduction or framing "
+        f"- draft: one paragraph, approximately {word_target} Arabic words, no introduction or framing "
         "sentences outside the paragraph itself.\n"
         "- supporting_paper_ids: every paper_id actually cited inline in the paragraph.\n\n"
         f"INPUT (JSON):\n{json.dumps(draft_input, ensure_ascii=False, indent=2)}\n\n"
@@ -333,7 +348,7 @@ def format_draft_prompt(draft_input: dict) -> str:
     )
 
 
-def draft_writing(question: str, stages: dict, drafter) -> dict:
+def draft_writing(question: str, stages: dict, drafter, plan: str = "normal") -> dict:
     """
     Writes one free-form academic paragraph using ONLY the findings already
     extracted in a completed run -- no new API calls beyond this one.
@@ -343,7 +358,7 @@ def draft_writing(question: str, stages: dict, drafter) -> dict:
     """
     extraction_findings = _extraction_findings_from_stages(stages)
     draft_input = build_draft_input(question, extraction_findings)
-    draft_prompt = format_draft_prompt(draft_input)
+    draft_prompt = format_draft_prompt(draft_input, plan)
 
     draft_raw = drafter(draft_prompt)
     draft_output = draft_raw if isinstance(draft_raw, dict) else parse_strict_json(draft_raw)
@@ -364,6 +379,7 @@ FOLLOWUP_RESEARCH_MAX_PAPERS = 3  # kept small -- this path costs roughly a full
 def research_followup(
     original_question: str, stages: dict, follow_up_question: str,
     query_generator, relevance_classifier, extractor, followup_answerer,
+    plan: str = "normal",
 ) -> dict:
     """
     Escalation path for a follow-up question the cheap answer_followup()
@@ -419,7 +435,7 @@ def research_followup(
     combined_findings = existing_findings + new_findings
 
     followup_input = build_followup_input(original_question, combined_findings, follow_up_question)
-    followup_prompt = format_followup_prompt(followup_input)
+    followup_prompt = format_followup_prompt(followup_input, plan)
     followup_raw = followup_answerer(followup_prompt)
     followup_output = followup_raw if isinstance(followup_raw, dict) else parse_strict_json(followup_raw)
 

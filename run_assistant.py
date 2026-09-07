@@ -84,14 +84,19 @@ FINAL_SYNTHESIS_MAX_TOKENS = 6000
 # Follow-up Q&A: a single ~120-150-word answer plus a short list of paper
 # ids, reasoning only over already-extracted findings (no abstracts). This
 # is a smaller job than final synthesis (one string field, not three), so a
-# lower ceiling is appropriate.
+# lower ceiling is appropriate. Raised 2026-09-07 alongside the per-plan
+# word targets (pipeline_runner.FOLLOWUP_WORD_TARGETS) -- max tier's 350-word
+# target would have been cut close/truncated under the old 700-token ceiling
+# sized for the original flat 120-150-word answer.
 FOLLOWUP_MODEL = "claude-sonnet-5"
-FOLLOWUP_MAX_TOKENS = 700
-# Draft writing: one ~200-300-word free-form academic paragraph, reasoning
-# only over already-extracted findings (no abstracts) -- same input scope as
-# follow-up Q&A, so a similar ceiling, just a bit higher for one full
-# paragraph instead of a short answer.
-DRAFT_MAX_TOKENS = 1200
+FOLLOWUP_MAX_TOKENS = 2000
+# Draft writing: one free-form academic paragraph (200-360 words depending on
+# plan, see pipeline_runner.DRAFT_WORD_TARGETS), reasoning only over already-
+# extracted findings (no abstracts) -- same input scope as follow-up Q&A, so
+# a similar ceiling, just a bit higher for one full paragraph instead of a
+# short answer. Raised 2026-09-07 alongside the per-plan word targets, same
+# reasoning as FOLLOWUP_MAX_TOKENS above.
+DRAFT_MAX_TOKENS = 1600
 
 # Token usage for each real model call this run, logged as
 # {"stage": str, "model": str, "input_tokens": int, "output_tokens": int}.
