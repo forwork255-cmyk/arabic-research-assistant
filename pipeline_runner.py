@@ -185,12 +185,41 @@ def format_final_synthesis_prompt(final_synthesis_input: dict) -> str:
     )
 
 
-def extract_one_paper(question: str, paper: dict, extractor) -> dict:
+def format_finding_verification_prompt(finding: str, abstract: str) -> str:
+    """
+    Programmatically build a second-opinion prompt checking ONE already-
+    extracted finding against the abstract it was supposedly grounded in --
+    catching the subtler failure mode where a citation is real but the
+    finding drifts from or overstates what the abstract actually says.
+    """
+    return (
+        "Below is one abstract and one finding a previous step extracted from it. "
+        "Check whether the finding is a faithful, non-exaggerated reflection of the abstract -- "
+        "not whether it is well-written.\n\n"
+        f"ABSTRACT:\n{abstract}\n\n"
+        f"FINDING:\n{finding}\n\n"
+        "Mark accurate=false only for a real mismatch: a specific number, result, sample, or "
+        "conclusion in the finding that the abstract does not support, or a meaningfully stronger "
+        "claim than the abstract makes. Do not mark it false just for paraphrasing or added detail "
+        "that is a reasonable, non-exaggerated reading of the abstract."
+    )
+
+
+def extract_one_paper(question: str, paper: dict, extractor, verifier=None) -> dict:
     """
     Run Phase-1 extraction for ONE paper and validate it. Shared by
     run_pipeline() (all selected papers) and expand_selection() (only the
     newly added papers), so the extraction+validation logic lives in
     exactly one place.
+
+    verifier, if given, runs a second, independent Haiku call checking the
+    finding against the abstract (see format_finding_verification_prompt).
+    This is a quality SIGNAL, not a grounding gate: a flagged finding is
+    logged (printed for now -- the caller can wire this to Sentry) but still
+    returned as-is. Failing the whole search over one second-opinion call --
+    itself just another model call, not ground truth -- would trade a
+    subtle quality risk for a much more disruptive one. Optional (defaults
+    to None/skipped) so existing callers/tests are unaffected.
     """
     expected_id = short_id(paper["id"])
     extraction_input = build_single_paper_extraction_input(question, paper)
@@ -212,6 +241,24 @@ def extract_one_paper(question: str, paper: dict, extractor) -> dict:
             f"Evidence extraction for paper {expected_id} failed validation:\n"
             + "\n".join(f" - {p}" for p in extraction_problems)
         )
+
+    if verifier is not None:
+        try:
+            verification_prompt = format_finding_verification_prompt(extraction_output["finding"], paper["abstract"])
+            verification_raw = verifier(verification_prompt)
+            verification_output = (
+                verification_raw if isinstance(verification_raw, dict) else parse_strict_json(verification_raw)
+            )
+            if isinstance(verification_output, dict) and verification_output.get("accurate") is False:
+                print(
+                    f"[server-only log] Finding verification flagged paper {expected_id}: "
+                    f"{verification_output.get('issue', '(no reason given)')}"
+                )
+        except Exception as error:
+            # Fail open, same philosophy as moderation elsewhere -- an
+            # infra hiccup on this second-opinion check should never break
+            # a real, working search.
+            print(f"[server-only log] Finding verification check failed, skipping: {error}")
 
     return extraction_output
 
@@ -379,7 +426,7 @@ FOLLOWUP_RESEARCH_MAX_PAPERS = 3  # kept small -- this path costs roughly a full
 def research_followup(
     original_question: str, stages: dict, follow_up_question: str,
     query_generator, relevance_classifier, extractor, followup_answerer,
-    plan: str = "normal",
+    plan: str = "normal", verifier=None,
 ) -> dict:
     """
     Escalation path for a follow-up question the cheap answer_followup()
@@ -429,7 +476,7 @@ def research_followup(
     new_papers = [p for p in candidate_papers if p["id"] in selected_ids]
 
     with ThreadPoolExecutor(max_workers=len(new_papers)) as executor:
-        new_findings = list(executor.map(lambda p: extract_one_paper(follow_up_question, p, extractor), new_papers))
+        new_findings = list(executor.map(lambda p: extract_one_paper(follow_up_question, p, extractor, verifier), new_papers))
 
     existing_findings = _extraction_findings_from_stages(stages)
     combined_findings = existing_findings + new_findings
@@ -450,7 +497,7 @@ def research_followup(
     return followup_output
 
 
-def run_pipeline(question: str, query_generator, relevance_classifier, extractor, synthesizer, progress=None) -> dict:
+def run_pipeline(question: str, query_generator, relevance_classifier, extractor, synthesizer, progress=None, verifier=None) -> dict:
     """
     Run the full workflow. query_generator, relevance_classifier, extractor,
     and synthesizer are callables: (prompt_text: str) -> raw_model_output
@@ -558,7 +605,7 @@ def run_pipeline(question: str, query_generator, relevance_classifier, extractor
     with ThreadPoolExecutor(max_workers=len(selected_papers)) as executor:
         # .map() preserves selected_papers' order in the results, even
         # though the calls themselves run concurrently.
-        extraction_findings = list(executor.map(lambda p: extract_one_paper(question, p, extractor), selected_papers))
+        extraction_findings = list(executor.map(lambda p: extract_one_paper(question, p, extractor, verifier), selected_papers))
 
     report(5, f"Evidence extraction complete — {len(extraction_findings)} papers processed")
 
@@ -573,7 +620,7 @@ def run_pipeline(question: str, query_generator, relevance_classifier, extractor
 EXPAND_INCREMENT = 2  # how many additional papers one "expand" click adds
 
 
-def expand_selection(question: str, stages: dict, extractor, synthesizer, additional_count: int = EXPAND_INCREMENT) -> dict:
+def expand_selection(question: str, stages: dict, extractor, synthesizer, additional_count: int = EXPAND_INCREMENT, verifier=None) -> dict:
     """
     Add up to `additional_count` more papers (not already selected) to an
     already-completed run, in relevance order (HIGH, then MEDIUM, then LOW).
@@ -602,7 +649,7 @@ def expand_selection(question: str, stages: dict, extractor, synthesizer, additi
         raise PipelineError("لا توجد دراسات إضافية متاحة للإضافة إلى هذا البحث.")
 
     with ThreadPoolExecutor(max_workers=len(new_papers)) as executor:
-        new_findings = list(executor.map(lambda p: extract_one_paper(question, p, extractor), new_papers))
+        new_findings = list(executor.map(lambda p: extract_one_paper(question, p, extractor, verifier), new_papers))
 
     existing_findings = _extraction_findings_from_stages(stages)
 

@@ -943,6 +943,7 @@ def render_expand_button(idx: int) -> None:
                 new_stages = expand_selection(
                     entry["question"], entry["stages"],
                     backend.extract_findings, with_profile_context(backend.make_synthesizer(plan)),
+                    verifier=backend.verify_finding,
                 )
         except PipelineError as error:
             print(f"[server-only log] PipelineError (expand): {error}")
@@ -1032,7 +1033,7 @@ def render_followup_thread(idx: int) -> None:
                                 entry["question"], entry["stages"], fu["question"],
                                 backend.generate_queries, backend.make_relevance_classifier(plan),
                                 backend.extract_findings, with_profile_context(backend.make_followup_answerer(plan)),
-                                plan=plan,
+                                plan=plan, verifier=backend.verify_finding,
                             )
                     except PipelineError as error:
                         print(f"[server-only log] PipelineError (research_followup): {error}")
@@ -1268,6 +1269,7 @@ def run_new_search(question: str) -> None:
                 extractor=backend.extract_findings,
                 synthesizer=with_profile_context(backend.make_synthesizer(plan)),
                 progress=on_progress,
+                verifier=backend.verify_finding,
             )
         except ModelClientError as error:
             print(f"[server-only log] ModelClientError: {error}")  # console only, never shown in the browser

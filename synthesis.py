@@ -45,6 +45,30 @@ PER_PAPER_EXTRACTION_JSON_SCHEMA = {
 }
 
 
+# A second, independent check on Phase 1's output: does this specific finding
+# actually reflect what the abstract says, or did it drift/overstate despite
+# citing a real paper correctly? This is a quality signal, not a grounding
+# gate -- see pipeline_runner.extract_one_paper(), which logs a flagged
+# finding but does not reject it (a single second-opinion model call can
+# itself be wrong; failing a whole search over one flagged paper would be
+# worse than the problem it's checking for).
+FINDING_VERIFICATION_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "accurate": {
+            "type": "boolean",
+            "description": "True if the finding is a faithful, non-exaggerated reflection of what the abstract actually states. False if it overstates, invents a detail not in the abstract, or otherwise drifts from the source.",
+        },
+        "issue": {
+            "type": "string",
+            "description": "If accurate is false, one short sentence in Arabic explaining the specific mismatch. Empty string if accurate is true.",
+        },
+    },
+    "required": ["accurate", "issue"],
+    "additionalProperties": False,
+}
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: final synthesis
 # ---------------------------------------------------------------------------

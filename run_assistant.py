@@ -15,7 +15,7 @@ import sys
 
 from model_client import call_model_with_usage, call_model_structured, call_model_with_document, ModelClientError, TruncatedResponseError
 from pipeline_runner import run_pipeline, PipelineError
-from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA, DRAFT_JSON_SCHEMA
+from synthesis import PER_PAPER_EXTRACTION_JSON_SCHEMA, FINAL_SYNTHESIS_JSON_SCHEMA, FOLLOWUP_JSON_SCHEMA, DRAFT_JSON_SCHEMA, FINDING_VERIFICATION_JSON_SCHEMA
 from moderation import MODERATION_JSON_SCHEMA, QUESTION_CLASSIFICATION_JSON_SCHEMA
 from relevance_filter import RELEVANCE_JSON_SCHEMA
 
@@ -47,6 +47,14 @@ RELEVANCE_MODEL = "claude-sonnet-5"
 # genuinely harder.
 EXTRACTION_MODEL = "claude-haiku-4-5"
 SYNTHESIS_MODEL = "claude-sonnet-5"
+# Second-opinion check on one already-extracted finding against its abstract
+# (see pipeline_runner.format_finding_verification_prompt) -- a small,
+# bounded yes/no + one-sentence-reason task, same size class as extraction,
+# so Haiku here too. Not tied to plan tier: this is an internal quality
+# signal, not a user-facing content lever, so every plan gets the same cheap
+# check rather than varying it.
+VERIFICATION_MODEL = "claude-haiku-4-5"
+VERIFICATION_MAX_TOKENS = 200
 
 # Plan tiers: which model handles the two hardest reasoning stages
 # (relevance classification, final synthesis). "free" (unsubscribed
@@ -202,6 +210,18 @@ def extract_findings(prompt: str) -> dict:
     return _call_structured_with_usage_logging(
         prompt, model=EXTRACTION_MODEL, max_tokens=EXTRACTION_MAX_TOKENS,
         schema=PER_PAPER_EXTRACTION_JSON_SCHEMA, stage_name="Evidence extraction",
+    )
+
+
+def verify_finding(prompt: str) -> dict:
+    # Second opinion on ONE already-extracted finding, checked against the
+    # abstract it was supposedly grounded in -- see
+    # pipeline_runner.extract_one_paper()/format_finding_verification_prompt.
+    # Optional, fail-open: a flagged/failed check is logged, never blocks
+    # the pipeline (a second model call is itself not ground truth).
+    return _call_structured_with_usage_logging(
+        prompt, model=VERIFICATION_MODEL, max_tokens=VERIFICATION_MAX_TOKENS,
+        schema=FINDING_VERIFICATION_JSON_SCHEMA, stage_name="Finding verification",
     )
 
 
@@ -410,6 +430,7 @@ def main() -> None:
             extractor=extract_findings,
             synthesizer=synthesize_final,
             progress=print_progress,
+            verifier=verify_finding,
         )
     except ModelClientError as error:
         print(f"ERROR: {error}")
