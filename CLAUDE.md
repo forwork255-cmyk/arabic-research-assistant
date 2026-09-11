@@ -1,4 +1,4 @@
-# Arabic Research Assistant
+# متخصص أبحاث (Mutakhasis Abhath)
 
 ## My situation
 

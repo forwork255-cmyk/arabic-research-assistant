@@ -1,5 +1,5 @@
 """
-The first real, automated CLI for the Arabic Research Assistant.
+The first real, automated CLI for متخصص أبحاث (Mutakhasis Abhath).
 
 Usage:
     python run_assistant.py "Arabic research question"

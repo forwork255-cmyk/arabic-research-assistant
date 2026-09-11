@@ -37,14 +37,14 @@ def send_password_reset_email(gmail_address: str, gmail_app_password: str, to_em
     # attribute isn't affected by how the visible text wraps.
     escaped_link = html.escape(reset_link, quote=True)
     plain_body = (
-        "تلقّينا طلباً لإعادة تعيين كلمة المرور لحسابك في مساعد البحث العلمي العربي.\n\n"
+        "تلقّينا طلباً لإعادة تعيين كلمة المرور لحسابك في متخصص أبحاث.\n\n"
         "لإعادة التعيين، افتح هذا الرابط خلال ساعة واحدة (انسخه بالكامل إلى المتصفح إذا لم يعمل النقر عليه):\n"
         f"{reset_link}\n\n"
         "إذا لم تطلب ذلك، يمكنك تجاهل هذه الرسالة بأمان."
     )
     html_body = f"""\
 <html dir="rtl" lang="ar"><body style="font-family: Arial, sans-serif; text-align: right;">
-<p>تلقّينا طلباً لإعادة تعيين كلمة المرور لحسابك في مساعد البحث العلمي العربي.</p>
+<p>تلقّينا طلباً لإعادة تعيين كلمة المرور لحسابك في متخصص أبحاث.</p>
 <p>لإعادة التعيين، اضغط على الرابط التالي خلال ساعة واحدة:</p>
 <p><a href="{escaped_link}">إعادة تعيين كلمة المرور</a></p>
 <p style="color: #666; font-size: 0.9em;">إذا لم يعمل الزر أعلاه، انسخ هذا الرابط بالكامل إلى المتصفح:<br>{escaped_link}</p>

@@ -1,5 +1,5 @@
 """
-Smallest possible visual interface for the Arabic Research Assistant.
+Smallest possible visual interface for متخصص أبحاث (Mutakhasis Abhath).
 
 This file contains NO pipeline logic, NO prompt text, and NO model-calling
 code of its own. It only:
@@ -34,7 +34,7 @@ import email_sender
 from pipeline_runner import run_pipeline, expand_selection, answer_followup, research_followup, draft_writing, PipelineError
 from model_client import ModelClientError
 
-st.set_page_config(page_title="مساعد البحث العلمي العربي", page_icon="📚", layout="centered")
+st.set_page_config(page_title="متخصص أبحاث", page_icon="📚", layout="centered")
 
 # Error monitoring: reports unhandled exceptions to Sentry automatically, so
 # a production failure is a real-time alert instead of something we only
@@ -69,7 +69,7 @@ def show_reset_password_form() -> None:
     token = st.query_params.get("reset_token", "")
     email = st.query_params.get("reset_email", "")
 
-    st.title("📚 مساعد البحث العلمي العربي")
+    st.title("📚 متخصص أبحاث")
     st.subheader("إعادة تعيين كلمة المرور")
 
     if not auth.verify_reset_token(email, token):
@@ -129,7 +129,7 @@ def show_login_and_signup() -> bool:
             # Stale/invalid token -- drop it so we don't keep re-checking it.
             del st.query_params["t"]
 
-    st.title("📚 مساعد البحث العلمي العربي")
+    st.title("📚 متخصص أبحاث")
     login_tab, signup_tab = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
 
     with login_tab:
@@ -671,7 +671,7 @@ if is_owner():
         unsafe_allow_html=True,
     )
 
-st.title("📚 مساعد البحث العلمي العربي")
+st.title("📚 متخصص أبحاث")
 st.markdown(
     '<p class="app-subtitle">اكتب سؤالاً بحثياً أكاديمياً باللغة العربية. سيقوم النظام بالبحث عن دراسات '
     "حقيقية من OpenAlex، وتقييم مدى صلتها بالسؤال، ثم كتابة ملخص أدلة عربي "
